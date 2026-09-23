@@ -1,0 +1,12 @@
+{
+  "id": 4102,
+  "name": "Homework 2",
+  "description": "Solve problems 1 through 5.",
+  "due_at": "2026-09-02T23:59:00Z",
+  "points_possible": 50,
+  "published": true,
+  "html_url": "https://canvas.example.edu/courses/17/assignments/4102",
+  "submission": {"workflow_state": "unsubmitted"},
+  "updated_at": "2026-08-30T16:00:00Z"
+}
+

@@ -1,0 +1,2 @@
+"""Academic Watcher backend."""
+

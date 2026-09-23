@@ -1,0 +1,67 @@
+/* Final shell breakpoint: older layers used both 820px and 900px. */
+.work-card.completed-work-card { min-height: 0; overflow-wrap: anywhere; }
+.completed-work-list { margin-bottom: var(--s6); }
+.source-card-heading > div,
+.form-grid > *,
+.credential-form > *,
+.settings-panel,
+.source-connection-card { min-width: 0; }
+.form-grid input, .form-grid select, .credential-form input,
+.credential-form select, .credential-form textarea,
+.settings-panel input, .settings-panel select { min-width: 0; max-width: 100%; }
+.source-connection-card { container-type: inline-size; }
+.file-copy strong { display: block; overflow-wrap: anywhere; }
+.file-card > .icon-button { flex-shrink: 0; }
+.source-status-badge.neutral { color: var(--muted); background: var(--panel2); border-color: var(--line); }
+/* Desktop popovers anchor to the whole toolbar, not a wrapped summary. */
+.calendar-options { position: relative; }
+.calendar-options details { position: static; }
+@container (max-width: 420px) {
+  .source-card-heading { flex-direction: column; gap: 8px; }
+  .source-card-heading h3 { overflow-wrap: anywhere; }
+}
+@media (max-width: 900px) {
+  .app-shell > .app-sidebar {
+    position: static; width: 100%; height: auto; max-height: none;
+    padding: 16px; overflow: visible; border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .app-shell > main { margin-left: 0; width: 100%; padding: 24px 16px 90px; }
+  .brand { padding-bottom: 12px; }
+  .main-nav { flex-wrap: wrap; overflow: visible; gap: 4px; padding: 0; }
+  .main-nav button { flex: 0 0 auto; height: 40px; font-size: 14px; }
+  .sidebar-bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center; max-height: none; overflow: visible; padding: 10px 0 0; margin-top: 10px; }
+  .sidebar-source-list { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+  .sidebar-bottom > .settings-link { min-width: 0; margin: 0; }
+  .sidebar-bottom .settings-link::before { display: none; }
+  .source-quick-panel { left: 12px !important; right: 12px; top: auto !important;
+    bottom: 78px; width: auto; max-height: calc(100dvh - 96px); }
+  .course-grid, .auth-grid { grid-template-columns: minmax(0, 1fr); }
+  .files-grid, .file-grid { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)) !important; }
+  .toolbar > *, .section-title > *, .workspace-head > * { min-width: 0; max-width: 100%; }
+  select { min-width: 0; max-width: 100%; }
+  .calendar-options details { width: 100%; }
+  .calendar-filters { position: static; min-width: 0; width: 100%; margin-top: 8px; }
+}
+@media (max-width: 480px) {
+  .sidebar-bottom { grid-template-columns: minmax(0, 1fr) auto; }
+  .sidebar-bottom > .sidebar-source, .sidebar-source-list { grid-column: 1; }
+  .sidebar-bottom > .settings-link { grid-column: 2; grid-row: 1; }
+  .settings-panel, .source-connection-card { padding: 16px; }
+  .settings-tabs { flex-wrap: wrap; overflow: visible; gap: 4px; }
+  .settings-tabs button { flex: 1 0 auto; padding: 0 10px; }
+  .source-type-grid, .provider-row, .two-columns { grid-template-columns: minmax(0, 1fr); }
+  .provider-facts { min-width: 0; overflow-wrap: anywhere; }
+  .provider-facts > div { padding-block: 8px; }
+  .provider-row > div { flex-wrap: wrap; }
+  .empty, .not-found { padding: 30px 16px; }
+  .dialog { padding: 18px; }
+  .calendar-selection, .ics-preview-list, .commute-grid { grid-template-columns: minmax(0, 1fr); }
+  .agenda-list article { flex-wrap: wrap; }
+  .visual-calendar .fc-daygrid-event-time { white-space: normal; overflow-wrap: anywhere; }
+  .visual-calendar .fc-daygrid-block-event .fc-event-main-frame { flex-direction: column; }
+  .visual-calendar .fc-daygrid-block-event .fc-event-time {
+    white-space: normal; overflow-wrap: anywhere; margin-right: 0;
+  }
+}

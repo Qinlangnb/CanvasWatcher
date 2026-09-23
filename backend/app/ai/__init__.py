@@ -1,0 +1,2 @@
+"""Validated AI provider boundary."""
+

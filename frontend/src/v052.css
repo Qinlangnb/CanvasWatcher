@@ -1,0 +1,9 @@
+.now-marker{pointer-events:none}
+.now-marker line{stroke:var(--amber);stroke-width:2;stroke-dasharray:5 6;opacity:.82}
+.now-marker rect{fill:#3d321d;stroke:var(--amber);stroke-width:1}
+.now-marker text{fill:var(--amber);font:600 12px 'DM Mono';text-anchor:middle}
+.change-main h3{max-width:74ch;line-height:1.42}
+.change-secondary{color:var(--muted);font-size:13px!important;letter-spacing:.01em}
+.internal-metadata{margin-top:var(--s5);border-top:1px solid var(--line);padding-top:var(--s4);color:var(--muted)}
+.internal-metadata summary{cursor:pointer;font-size:14px}
+.internal-metadata pre{overflow:auto;padding:var(--s4);border-radius:var(--r2);background:#111511;color:#bdc7ba;font-size:12px}

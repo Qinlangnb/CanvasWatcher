@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      COURSES_CONFIG: /config/courses.runtime.yaml
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    profiles: ["notifications"]
+    command: serve
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+    restart: unless-stopped
+volumes:
+  ntfy_cache:

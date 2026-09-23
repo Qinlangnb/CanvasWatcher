@@ -1,0 +1,30 @@
+/* Shared states after legacy styles; responsive geometry remains the final layer. */
+button {
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease,
+    box-shadow .18s ease, opacity .18s ease, filter .18s ease, transform .12s ease;
+}
+button:not(:disabled):hover { filter: brightness(1.12); }
+button:not(:disabled):active { filter: brightness(.94); transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible { outline: 3px solid #9bc75f; outline-offset: 2px; }
+.secondary:not(:disabled):hover, .icon-button:not(:disabled):hover,
+.status-button:not(:disabled):hover { background-color: #303b2a; border-color: #718266; }
+.ghost:not(:disabled):hover, nav button:not(:disabled):hover,
+.tabs button:not(:disabled):hover, .type-index button:not(:disabled):hover,
+.settings-tabs button:not(:disabled):hover, .change-main:not(:disabled):hover {
+  background-color: #283028; color: #f2f6ef; border-radius: var(--r2);
+}
+.source-type-grid button:not(:disabled):hover { border-color: #718266; }
+.action-feedback { display: flex; align-items: center; gap: 8px; margin: 8px 0;
+  font-size: 14px; overflow-wrap: anywhere; max-width: 100%; }
+.action-feedback.error { color: var(--red); }
+.action-feedback.success { color: var(--lime); }
+.action-feedback.busy { color: var(--muted); }
+.commit-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.commit-control .action-feedback { margin: 0; }
+.file-picker-action { display: inline-flex; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  button:not(:disabled):active { transform: none; }
+  .course-card[tabindex]:hover { transform: none; }
+}

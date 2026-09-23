@@ -1,0 +1,37 @@
+.work-card.task-interactive {
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.work-card.has-task-target { cursor: pointer; }
+.work-card.has-task-target:hover, .work-card.has-task-target:focus-within {
+  border-color: var(--accent, #c9f76b);
+  box-shadow: 0 3px 12px #0003;
+  transform: translateY(-1px);
+}
+.work-card.has-task-target:active { transform: translateY(0); }
+.work-card .task-title { font-size: 1.25rem; line-height: 1.35; }
+.work-card .task-title, .work-card .task-title a,
+.completed-work-card h3 a { color: var(--text, #eff4e8); text-decoration: none; }
+.task-title a:hover { text-decoration: underline; text-underline-offset: .2em; }
+.task-title a:focus-visible, .task-node:focus-visible {
+  outline: 2px solid var(--accent, #c9f76b); outline-offset: 4px;
+}
+.task-node circle { transition: stroke-width 160ms ease, fill 160ms ease; }
+.task-node.has-task-target { cursor: pointer; }
+.task-node.has-task-target:hover circle, .task-node.has-task-target:focus-visible circle { stroke: var(--accent, #c9f76b); stroke-width: 3px; }
+.task-node:not(.has-task-target) { cursor: default; }
+.submission-status { display: inline-flex; align-items: center; gap: .3rem; font-size: .9em; }
+.submission-status.positive { color: #a3e6b3; }
+.submission-status.unconfirmed { color: #d2c8aa; }
+.source-connection-card, .source-card-heading > div, .browser-signin-controls { min-width: 0; }
+.source-card-heading { flex-wrap: wrap; gap: .75rem; align-items: flex-start; }
+.source-card-heading h3, .source-card-heading p, .source-diagnostics { overflow-wrap: anywhere; }
+.source-action-row, .source-connection-card > .card-actions { display: flex; flex-wrap: wrap; align-items: stretch; gap: .65rem; }
+.source-action-row button, .source-connection-card > .card-actions button { min-height: 2.75rem; height: auto; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.browser-signin-controls { margin-block: .75rem; }
+.browser-signin-controls p { margin-block: .65rem; }
+.credential-form .tabs { flex-wrap: wrap; gap: .5rem; }
+.credential-form .tabs button { min-width: 0; max-width: 100%; height: auto; min-height: 2.5rem; white-space: normal; overflow-wrap: anywhere; padding-block: .6rem; }
+@media (prefers-reduced-motion: reduce) {
+  .work-card.task-interactive, .task-node circle { transition: none; }
+  .work-card.has-task-target:hover, .work-card.has-task-target:active, .work-card.has-task-target:focus-within { transform: none; }
+}

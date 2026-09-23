@@ -1,0 +1,2 @@
+"""External source adapters."""
+

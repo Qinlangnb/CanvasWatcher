@@ -1,0 +1,3 @@
+# Built-in classifiers cover solutions, exams, discussion, homework,
+# lectures and reading. Optional custom regex rules run first.
+rules: []

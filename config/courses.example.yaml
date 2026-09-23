@@ -1,0 +1,5 @@
+# Start empty. Add sources in Settings > Sources, or define your own courses here.
+# Keep real course URLs and private calendars in courses.runtime.yaml (gitignored).
+courses: []
+course_aliases: []
+source_calendars: {}

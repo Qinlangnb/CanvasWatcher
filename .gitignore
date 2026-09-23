@@ -1,0 +1,44 @@
+# Credentials and local state
+.env
+.env.*
+!.env.example
+data/
+data-*/
+downloads/
+logs/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
+*storage_state*.json
+*cookies*.json
+
+# Per-installation configuration
+config/courses.runtime.yaml
+config/courses.yaml
+config/availability.yaml
+config/file_rules.yaml
+
+# Build, environment and test artifacts
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/node_modules/
+**/dist/
+**/.cache/
+*.pyc
+*.tsbuildinfo
+*.log
+.coverage
+coverage/
+
+# Local collaboration/review artifacts
+.agent-collab/
+.agent-changed-files.json
+*.bak
