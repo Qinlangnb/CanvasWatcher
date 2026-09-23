@@ -6,6 +6,10 @@ Local-first academic dashboard for Canvas and course websites. It tracks course 
 
 Version / 版本：**0.7.1**. [Deployment guide / 中英双语部署说明](DEPLOYMENT.md).
 
+The post-release notification hotfix scans beyond historical unapproved critical rows so an approved homepage banner cannot be hidden by a 100-row candidate window. The regression is covered by the 580-test backend suite.
+
+发布后的通知热修复会继续扫描历史未批准的高优先级记录，避免它们占满 100 条候选窗口、遮住已批准的首页通知；后端 580 项测试包含该回归场景。
+
 This is a self-hosted, single-user project. The default Compose configuration binds the web UI, API and optional ntfy service to loopback only. Do not publish these ports directly to the internet. Browser sign-in uses a separate host-side Auth Broker; passwords and MFA stay on the provider's official pages. API tokens and AI keys should be entered through the local UI and are process-memory-only unless explicitly configured otherwise; a backend restart requires re-import.
 
 这是单用户自托管项目。默认 Compose 仅绑定本机回环地址，不应直接暴露到公网。浏览器登录通过独立的宿主机 Auth Broker 完成；密码和 MFA 只在平台官方页面输入。API Token 与 AI Key 建议在本地界面导入并只保留于进程内存；后端重启后需重新导入。

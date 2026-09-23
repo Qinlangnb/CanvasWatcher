@@ -73,6 +73,25 @@ def test_historical_unreviewed_notification_is_preserved_but_not_a_home_banner()
 
 
 @pytest.mark.asyncio
+async def test_legacy_critical_backlog_cannot_hide_approved_banner(tmp_path):
+    with memory_db() as db:
+        event = candidate(db)
+        enqueue_change_analysis(db, event)
+        worker = AnalysisWorker(make_settings(tmp_path, llm_provider="mock"))
+        worker.service.provider = DecisionProvider(True, importance="low")
+        assert await worker.run_pending(db) == 1
+        approved = db.scalar(select(Notification))
+        assert approved.level == "important"
+
+        legacy = candidate(db)
+        db.add_all(Notification(change_event_id=legacy.id, level="critical", title="Legacy",
+            body="Unreviewed", dedupe_key=f"legacy-{index}") for index in range(105))
+        db.commit()
+
+        assert [row["id"] for row in notifications(db)] == [approved.id]
+
+
+@pytest.mark.asyncio
 async def test_ntfy_outage_does_not_undo_ai_approval(tmp_path, monkeypatch):
     attempts = []
 

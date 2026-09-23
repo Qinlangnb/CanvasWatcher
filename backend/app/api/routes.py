@@ -1509,37 +1509,40 @@ async def edit_source_connection(
 @router.get("/notifications")
 def notifications(db: Session = Depends(get_db)):
     from app.services.change_policy import analysis_should_notify_user
-    candidates = list(
-        db.scalars(
-            select(Notification)
-            .where(Notification.dismissed_at.is_(None))
-            .order_by(case((Notification.level == "critical", 0), else_=1), Notification.id.desc())
-            .limit(NOTIFICATION_CANDIDATE_LIMIT)
-        )
-    )
     visible: list[dict[str, object]] = []
-    for row in candidates:
-        if row.level not in NOTIFICATION_BANNER_LEVELS:
-            continue
-        if row.change_event_id is not None:
-            event = db.get(ChangeEvent, row.change_event_id)
-            if event is None or not is_user_facing_event(db, event):
-                continue
-            analysis = db.scalar(select(ChangeAnalysis).where(ChangeAnalysis.change_event_id == event.id))
-            if not analysis_should_notify_user(event, analysis):
-                continue
-        visible.append({
-            "id": row.id,
-            "level": row.level,
-            "title": row.title,
-            "body": row.body,
-            "status": row.status,
-            "sent_at": row.sent_at,
-        })
-    # Keep critical approvals in view even when newer lower-priority approvals
-    # fill the three slots; retain recency within each banner level.
-    visible.sort(key=lambda row: (row["level"] != "critical", -row["id"]))
-    return visible[:NOTIFICATION_BANNER_LIMIT]
+    offset = 0
+    while len(visible) < NOTIFICATION_BANNER_LIMIT:
+        candidates = list(db.scalars(
+            select(Notification)
+            .where(Notification.dismissed_at.is_(None), Notification.level.in_(NOTIFICATION_BANNER_LEVELS))
+            .order_by(case((Notification.level == "critical", 0), else_=1), Notification.id.desc())
+            .offset(offset)
+            .limit(NOTIFICATION_CANDIDATE_LIMIT)
+        ))
+        if not candidates:
+            break
+        offset += len(candidates)
+        for row in candidates:
+            if row.change_event_id is not None:
+                event = db.get(ChangeEvent, row.change_event_id)
+                if event is None or not is_user_facing_event(db, event):
+                    continue
+                analysis = db.scalar(select(ChangeAnalysis).where(ChangeAnalysis.change_event_id == event.id))
+                if not analysis_should_notify_user(event, analysis):
+                    continue
+            visible.append({
+                "id": row.id,
+                "level": row.level,
+                "title": row.title,
+                "body": row.body,
+                "status": row.status,
+                "sent_at": row.sent_at,
+            })
+            if len(visible) == NOTIFICATION_BANNER_LIMIT:
+                break
+        if len(candidates) < NOTIFICATION_CANDIDATE_LIMIT:
+            break
+    return visible
 
 
 @router.post("/notifications/{notification_id}/dismiss", status_code=204)
