@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     daily_study_capacity_minutes: int = Field(default=180, ge=30, le=1440)
     log_level: str = "INFO"
     scheduler_enabled: bool = True
-    cors_origins: str = "http://localhost:5173,http://localhost:8080"
+    cors_origins: str = "http://localhost:5173,http://localhost:8080,http://127.0.0.1:8080"
     frontend_url: str = "http://localhost:8080"
     auth_broker_port: int = Field(default=8765, ge=1024, le=65535)
     canvas_oauth_client_id: str = ""

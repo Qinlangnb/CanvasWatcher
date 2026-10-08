@@ -1,7 +1,7 @@
 {
   "name": "academic-watcher-ui",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.7.2",
   "license": "GPL-2.0-only",
   "type": "module",
   "scripts": {

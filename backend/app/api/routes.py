@@ -140,7 +140,7 @@ NOTIFICATION_BANNER_LEVELS = {"important", "critical"}
 
 @router.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.7.1"}
+    return {"status": "ok", "version": "0.7.2"}
 
 
 def _course_label_fields(value: Course, *, name_key: str = "course_name") -> dict[str, str]:

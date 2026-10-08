@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, json } from "./api";
 import { brokerMessage } from "./brokerMessages";
+import { brokerReady, launchBroker, BROKER_START_POLL_MS, BROKER_START_TIMEOUT_MS } from "./brokerLaunch";
 
 type Ticket = { challenge_id: string; instance_id: string; provider: string; one_time_token: string; control_token: string };
 const request = (body: unknown): RequestInit => ({ ...json("POST", body), headers: { "Content-Type": "application/json", "X-AW-Broker": "1" } });
@@ -13,26 +14,71 @@ function useBroker() {
   const config = useQuery({ queryKey: ["auth-broker-config"], queryFn: () => api<{ broker_url: string }>("/api/auth/broker/configuration") });
   const url = config.data?.broker_url;
   const health = useQuery({ queryKey: ["auth-broker-health", url], enabled: !!url, retry: false, refetchInterval: 15000,
-    queryFn: () => api<{ protocol_version: number }>(`${url}/health`, { signal: AbortSignal.timeout(2500) }) });
-  return { url, ready: health.data?.protocol_version === 1 && !health.isError, health };
+    queryFn: () => api<{ protocol_version: number; backend_ready: boolean }>(`${url}/health`, { signal: AbortSignal.timeout(2500) }) });
+  return { url, ready: brokerReady(health.data) && !health.isError, health };
 }
 
 export function AuthBrokerHealth() {
-  const { ready, health } = useBroker();
+  const { url, ready, health } = useBroker();
+  const [launching, setLaunching] = useState(false);
+  const [message, setMessage] = useState("");
+  const [launchError, setLaunchError] = useState(false);
+  const gate = useRef(false);
+  const generation = useRef(0);
+  const alive = useRef(true);
+  const waitTimer = useRef<number>();
+  const wake = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false; generation.current += 1;
+      if (waitTimer.current !== undefined) window.clearTimeout(waitTimer.current);
+      wake.current?.();
+    };
+  }, []);
+  async function startBroker() {
+    if (gate.current) return;
+    gate.current = true;
+    const attempt = ++generation.current;
+    setLaunching(true); setLaunchError(false);
+    setMessage("Confirm the browser prompt to open the installed local launcher. Waiting for the broker and callback connection…");
+    try {
+      launchBroker();
+      const deadline = Date.now() + BROKER_START_TIMEOUT_MS;
+      while (alive.current && generation.current === attempt && Date.now() < deadline) {
+        const result = await health.refetch();
+        if (!alive.current || generation.current !== attempt) return;
+        if (!result.isError && brokerReady(result.data)) {
+          setMessage("Broker and callback connection are ready.");
+          return;
+        }
+        await new Promise<void>(resolve => {
+          wake.current = resolve;
+          waitTimer.current = window.setTimeout(() => { wake.current = null; resolve(); }, BROKER_START_POLL_MS);
+        });
+      }
+      if (alive.current && generation.current === attempt) {
+        setLaunchError(true);
+        setMessage("Broker did not become ready. Confirm the browser prompt and make sure the local launcher is installed on this computer, then retry Start broker.");
+      }
+    } catch {
+      if (alive.current && generation.current === attempt) {
+        setLaunchError(true); setMessage("Unable to open the local launcher. Ensure Academic Watcher's launcher is installed on this computer and retry.");
+      }
+    } finally {
+      gate.current = false;
+      if (alive.current && generation.current === attempt) setLaunching(false);
+    }
+  }
   return <section className="settings-panel" aria-label="Local Auth Broker">
     <h3>Local Auth Broker · {ready ? "Running" : "Not running"}</h3>
     {!ready && <p>Browser-based sign-in is unavailable. The broker must run on this computer, outside Docker.</p>}
-    <button type="button" className="secondary" disabled={health.isFetching} onClick={() => void health.refetch()}>Check broker</button>
+    <div className="source-action-row">
+      <button type="button" className="primary" disabled={!url || launching || ready} onClick={() => void startBroker()}>{launching ? "Starting broker…" : "Start broker"}</button>
+      <button type="button" className="secondary" disabled={!url || launching || health.isFetching} onClick={() => void health.refetch()}>Check broker</button>
+    </div>
+    {message && <p role={launchError ? "alert" : "status"}>{message}</p>}
     <BrowserSignIn credentialId="" clearAll />
-    <details><summary>Show setup instructions</summary><p>Open Windows PowerShell outside Docker and run each command on a separate line. Replace the path below with your CanvasWatcher checkout:</p>
-      <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{String.raw`cd "C:\path\to\CanvasWatcher"
-py -3.12 -m venv auth-broker/.venv
-./auth-broker/.venv/Scripts/python.exe -m pip install -e ./auth-broker
-./auth-broker/.venv/Scripts/python.exe -m playwright install chromium`}</pre>
-      <p>Start the broker for the local 8080 service. This execution-policy override applies only to the new PowerShell process:</p>
-      <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{'powershell -NoProfile -ExecutionPolicy Bypass -File ./start-auth-broker.ps1'}</pre>
-      <p>The broker opens official sign-in pages. Your school password and MFA are entered there, never in Academic Watcher.</p>
-    </details>
   </section>;
 }
 
@@ -106,7 +152,7 @@ export function BrowserSignIn({ credentialId, clearAll = false, provider = "canv
     <button type="button" className="ghost danger-text" disabled={!ready || busy} onClick={() => void start(clearAll ? "clear_all" : "clear")}>{clearAll ? "Clear all broker sessions" : `Clear ${provider} browser session`}</button>
     {busy && <button type="button" className="secondary" onClick={() => void cancel()}>Cancel sign-in</button>}
     </div>
-    {!ready && <p>Local Auth Broker is not running. See setup instructions above.</p>}
+    {!ready && !clearAll && <p>Use Start broker in the Local Auth Broker panel, then retry sign-in.</p>}
     {message && <p role={error ? "alert" : "status"}>{message}</p>}
   </section>;
 }

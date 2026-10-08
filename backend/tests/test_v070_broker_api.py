@@ -57,6 +57,33 @@ async def new_claim(client):
     return value, {**identity, "exchange_token": claim.json()["exchange_token"], "cookies": {"session": "fixture-cookie"}}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('origin', ['http://localhost:8080', 'http://127.0.0.1:8080'])
+async def test_advertised_default_origins_accept_broker_ticket(context, origin):
+    app, _store, _profile = context
+    headers = {'Origin': origin, 'X-AW-Broker': '1'}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.post('/api/auth/broker/challenges', headers=headers,
+            json={'provider': 'canvas', 'credential_id': 'canvas'})
+        assert response.status_code == 200
+        control = {key: response.json()[key] for key in
+                   ('challenge_id', 'instance_id', 'provider', 'control_token')}
+        assert (await client.post('/api/auth/broker/status', headers=headers, json=control)).status_code == 200
+        assert (await client.post('/api/auth/broker/cancel', headers=headers, json=control)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('origin', ['http://evil.example:8080', 'http://127.0.0.1:8081'])
+async def test_unlisted_origins_remain_denied(context, origin):
+    app, _store, _profile = context
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.post('/api/auth/broker/challenges',
+            headers={'Origin': origin, 'X-AW-Broker': '1'},
+            json={'provider': 'canvas', 'credential_id': 'canvas'})
+        assert response.status_code == 403
+        assert response.json()['detail'] == 'AUTH_ORIGIN_DENIED'
+
+
 @pytest.mark.parametrize("revoked", [False, True])
 async def test_independent_oauth_verify_refreshes_before_probe(context, monkeypatch, revoked):
     _app, store, profile = context

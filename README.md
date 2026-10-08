@@ -2,7 +2,7 @@
 
 CanvasWatcher is a local-first, single-user academic monitoring and planning system. It brings Canvas and course-site materials, deadlines, tasks, and meaningful changes into one dashboard, with optional AI-assisted review. Records are stored locally; enabling AI features can send selected academic context to your configured model provider.
 
-**Current public release:** v0.7.1 · [Deployment guide (English / 中文)](DEPLOYMENT.md) · [GNU GPL v2](LICENSE) · [Screenshots](#screenshots)
+**Current public release:** v0.7.2 · [Deployment guide (English / 中文)](DEPLOYMENT.md) · [GNU GPL v2](LICENSE) · [Screenshots](#screenshots)
 
 CanvasWatcher 是本地优先的单用户课程监测与学习规划工具：汇集 Canvas 和课程网站的资料、截止日期、任务与重要变更，可选用 AI 辅助审核。记录保存在本地；启用 AI 功能时，部分学业上下文可能发送至你配置的模型服务商。
 
@@ -31,7 +31,7 @@ flowchart LR
 - Detects source changes and reconciles tasks/files; homepage change notices require explicit AI approval when optional AI review is enabled.
 - Prioritizes today's work using deadlines, progress, available study time, and calendar context; imported ICS events are read-only.
 - Offers optional AI Chat with read tools and an explicit confirmation boundary before write tools execute.
-- Keeps browser-based sign-in in a separate local Auth Broker, with official provider pages handling passwords and MFA; automated backend/frontend tests and Docker Compose support repeatable deployment.
+- Keeps browser-based sign-in in a separate local Auth Broker, with official provider pages handling passwords and MFA; Windows can register the local launcher once and start it from Settings → Sources. Automated backend/frontend tests and Docker Compose support repeatable deployment.
 
 ## Screenshots
 

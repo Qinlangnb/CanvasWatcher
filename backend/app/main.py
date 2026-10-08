@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="Academic Watcher", version="0.7.1", lifespan=lifespan)
+app = FastAPI(title="Academic Watcher", version="0.7.2", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
