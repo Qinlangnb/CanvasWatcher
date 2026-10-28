@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, json } from "./api";
+import { withBasePath } from "./publicPath";
 import { CommitButton } from "./CommitButton";
 import { ProviderFacts } from "./ProviderFacts";
 import { SubmissionStatus } from "./SubmissionStatus";
+import { AssignmentFiles } from "./AssignmentFiles";
 import { embeddedControl, openTask, taskTarget } from "./taskNavigation";
 import type { TodayData, TodayWork, WorkSummary } from "./types";
 import { formatTodayDeadline } from "./timezone";
@@ -101,6 +103,7 @@ export function TodayView({
             <p>{item.today_reason} · {item.local_completed ? "Local work complete" : "Completed upstream"}</p>
             <p><SubmissionStatus state={item.submission_state} /> · Local completion does not submit to any provider</p>
             <ProviderFacts facts={item.provider_facts} />
+            <AssignmentFiles files={item.attachments} notify={setMessage} />
             {item.local_completed && <button className="secondary" disabled={reopening !== null} onClick={async () => {
               setReopening(item.task_id); setMessage("");
               try {
@@ -412,7 +415,7 @@ function WorkCard({
           ) : item.title}</h3>
           {item.source_link_kind === "course_page" ? <small>Original course page</small> : null}
           <ProviderFacts facts={item.provider_facts} />
-          {!item.source_url ? <a href={`/courses/${item.course_id}`}>Course details</a> : null}
+          {!item.source_url ? <a href={withBasePath(`/courses/${item.course_id}`)}>Course details</a> : null}
         </div>
         <span className={`priority ${item.priority_bucket.toLowerCase()}`}>
           {item.priority_bucket}
@@ -476,6 +479,7 @@ function WorkCard({
         />
       </label>
       <div className="work-actions">
+        <AssignmentFiles files={item.attachments} notify={notify} />
         {working ? (
           <button className="secondary" onClick={stop}>
             Stop

@@ -1,5 +1,7 @@
 # Local Auth Broker (protocol v1)
 
+For the multi-user preview, install the launcher with `--backend https://watcher.example.com/watcher --origin https://watcher.example.com`, replacing the example domain with the deployed HTTPS site. This direct mode does not create an SSH tunnel. The same desktop must have Playwright Chromium installed; browser passwords and MFA remain on the provider's official pages.
+
 Host component for Academic Watcher v0.7.2. It is not a Docker service and must run on the same desktop as the browser. See the [bilingual deployment guide](../DEPLOYMENT.md) for setup from the repository root.
 
 ## Windows one-click launcher
@@ -15,6 +17,8 @@ auth-broker/.venv/Scripts/python.exe -m academic_watcher_auth_broker.install_lau
 ```
 
 After registration, use Settings → Sources → **Start broker**, then **Check broker**. The webpage waits up to 60 seconds for Broker and callback health after `academicwatcher://start` activation. Defaults allow `http://localhost:8080` and `http://127.0.0.1:8080`; Broker port is fixed at `127.0.0.1:8765`, default backend `http://127.0.0.1:8000`. The install command accepts `--backend` (loopback HTTP origin) and `--origins` (comma-separated exact origins) for custom addresses. The browser may ask to open an external application or grant local-network access; confirm expected prompts. Each computer needs its own installation; a phone cannot launch a Windows Broker.
+
+For an operator-managed SSH tunnel, `install --tunnel <absolute-script-path>` is an advanced mode. The script must keep a tunnel to the backend at `127.0.0.1:8000` running until terminated. A sibling file named `migration.py` must provide `ROOT` (absolute remote application directory), `client()` returning `(ssh, password)`, `guard(ssh)` validating the remote host, and `remote(ssh, command, *, password, timeout)` returning command output. The launcher calls `remote` to read `ROOT/.runtime/lan.json`, whose JSON must contain a private IPv4 `ip` and may contain a matching `origin` equal to `https://<ip>:8080`. The launcher starts and stops only its own tunnel and Broker children. Operators must implement, audit, and secure this SSH helper themselves; the default local and direct HTTPS modes do not require it.
 
 Stop the Broker or remove the launcher registration with the same module (profiles and academic data are retained):
 

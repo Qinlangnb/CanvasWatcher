@@ -42,4 +42,4 @@ def test_unconfigured_installation_does_not_invent_an_institution(tmp_path):
     with Session(engine) as db:
         settings = Settings(canvas_base_url="", courses_config=tmp_path / "absent.yaml")
         assert ensure_existing_connections(db, settings) == 0
-        assert AuthService(settings).canvas_status(db) == {"configured": False, "credential_state": "NOT_CONFIGURED"}
+        assert AuthService(settings).canvas_status(db) == {"configured": False, "credential_state": "NOT_CONFIGURED", "credential_storage": "memory"}

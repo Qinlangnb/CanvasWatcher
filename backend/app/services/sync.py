@@ -30,6 +30,9 @@ from app.schemas import RawSourceItem
 from app.services.auth import AuthService
 from app.services.change_policy import (
     is_assignment_change_type,
+    is_grade_release,
+    is_reportable_change_type,
+    is_user_facing_event,
     should_emit_change,
 )
 from app.services.course_terms import (
@@ -38,7 +41,7 @@ from app.services.course_terms import (
     should_archive_new_course,
 )
 from app.services.diff import classify_change, summarize_change
-from app.services.downloader import FileDownloader, effective_file_type, safe_filename
+from app.services.downloader import FileDownloader, safe_filename
 from app.services.normalizer import content_hash
 from app.services.notifier import NtfyNotifier
 from app.services.planner import Planner
@@ -99,6 +102,8 @@ def _semantic_value(value: dict[str, Any], item_type: str) -> dict[str, Any]:
         "preview_url",
         "page_context_titles",
         "discovered_via_pages",
+        "discovered_via_assignments",
+        "assignment_context_titles",
         # Canvas increments this value continuously after an overdue deadline;
         # it is telemetry, not a semantic assignment change.
         "seconds_late",
@@ -438,11 +443,22 @@ class SyncService:
                 seen: dict[str, set[str]] = {}
                 course_rows: list[RawSourceItem] = []
                 try:
+                    if isinstance(adapter, WebsiteAdapter):
+                        # Retry known pending URLs directly, even when they no
+                        # longer appear in the shallow public-page traversal.
+                        adapter.retry_urls = [row.url for row in db.scalars(
+                            select(PendingResource).where(
+                                PendingResource.course_id == course.id,
+                                PendingResource.source_name == adapter.name,
+                                PendingResource.state.in_(["DISCOVERED", "AUTH_REQUIRED", "FAILED"]),
+                            ).order_by(PendingResource.last_attempt_at, PendingResource.id)
+                            .limit(adapter.path_limit)
+                        )]
                     course_rows = await adapter.fetch_items(course)
                     for raw in course_rows:
                         kind_counts[raw.item_type] += 1
                         seen.setdefault(raw.item_type, set()).add(raw.external_id)
-                        if raw.fetch_status in {"auth_required", "auth_failed"}:
+                        if raw.fetch_status != "ok":
                             item = self._pending_source_item(
                                 db,
                                 course,
@@ -451,7 +467,7 @@ class SyncService:
                             )
                             sync_state.items_seen += 1
                             self._mark_pending(db, course, item, raw)
-                            if raw.credential_id:
+                            if raw.credential_id and raw.fetch_status in {"auth_required", "auth_failed"}:
                                 self.auth.mark_runtime_failure(
                                     db, raw.credential_id, raw.fetch_status
                                 )
@@ -465,7 +481,6 @@ class SyncService:
                             emit_initial_event=not baseline,
                         )
                         sync_state.items_seen += 1
-                        sync_state.changes += int(event is not None)
                         self._mark_fetched(db, course, raw)
                         if raw.item_type == "assignment":
                             task = task_from_assignment(db, item, raw.structured)
@@ -495,7 +510,8 @@ class SyncService:
                             if file_event is not None:
                                 sync_state.changes += 1
                                 enqueue_change_analysis(db, file_event)
-                        if event is not None:
+                        if event is not None and is_user_facing_event(db, event):
+                            sync_state.changes += 1
                             enqueue_change_analysis(db, event)
                             # All change notifications require the persisted AI gate.
                             if not is_assignment_change_type(event.change_type):
@@ -546,6 +562,7 @@ class SyncService:
                                 **(source.metadata_json or {}),
                                 "resource_errors": [getattr(adapter, "error_details", {}).get(kind,
                                     {"resource": kind, "code": code, "http_status": None}) for kind, code in sorted(adapter.errors.items())],
+                                "unavailable_resources": getattr(adapter, "unavailable_resources", []),
                                 "counts": dict(
                                     Counter(row.item_type for row in course_rows)
                                 ),
@@ -566,10 +583,24 @@ class SyncService:
                                 break
                     elif source:
                         source.last_sync_at = utcnow()
-                        source.last_success_at = utcnow()
                         provider_errors = getattr(adapter, "errors", {})
-                        source.state = "DEGRADED" if provider_errors else "HEALTHY"
-                        source.last_error = "; ".join(f"{key}:{value}" for key, value in provider_errors.items()) or None
+                        failures = [row for row in course_rows if row.fetch_status not in {"ok", "not_found"}]
+                        if failures and all(row.fetch_status in {"auth_required", "auth_failed"} for row in failures):
+                            source.state = "AUTH_REQUIRED"
+                        else:
+                            source.state = "DEGRADED" if provider_errors or failures or getattr(adapter, "truncated", False) else "HEALTHY"
+                        errors = set(provider_errors.values()) | {row.fetch_status for row in failures}
+                        if getattr(adapter, "truncated", False):
+                            errors.add("discovery_limit_reached")
+                        source.last_error = "; ".join(sorted(errors)) or None
+                        if any(row.fetch_status == "ok" for row in course_rows):
+                            source.last_success_at = utcnow()
+                        source.metadata_json = {**(source.metadata_json or {}),
+                            "counts": dict(Counter(row.item_type for row in course_rows)),
+                            "pending_count": sum(row.fetch_status != "ok" for row in course_rows),
+                            "not_found_count": sum(row.fetch_status == "not_found" for row in course_rows)}
+                        if source.state != "HEALTHY":
+                            sync_state.errors.append(f"{course.course_code}/{adapter.name}: {source.last_error}")
                         if provider_errors:
                             sync_state.errors.append(f"{course.course_code}/{adapter.name}: partial provider response")
                     db.commit()
@@ -618,7 +649,7 @@ class SyncService:
             .order_by(DownloadedFile.version_number.desc())
             .limit(1)
         )
-        if latest is not None and metadata_event is None:
+        if latest is not None and metadata_event is None and not isinstance(adapter, WebsiteAdapter):
             return None
         if isinstance(adapter, CanvasAdapter):
             fetched = await adapter.fetch_file_result(raw)
@@ -655,7 +686,8 @@ class SyncService:
             filename=str(filename),
             classification_context=" ".join(
                 str(value)
-                for value in raw.structured.get("page_context_titles", [])
+                for value in [*raw.structured.get("page_context_titles", []),
+                              *raw.structured.get("assignment_context_titles", [])]
                 if value
             ),
             mime_type=mime_type,
@@ -675,12 +707,12 @@ class SyncService:
             )
             return None
         if result.record.integrity_status == "INVALID_DOWNLOAD":
-            if isinstance(adapter, CanvasAdapter) and metadata_event is not None:
-                metadata_event.change_type = "CANVAS_FILE_INVALID"
+            if metadata_event is not None:
+                metadata_event.change_type = "CANVAS_FILE_INVALID" if isinstance(adapter, CanvasAdapter) else "invalid_download"
                 metadata_event.importance = "important"
                 metadata_event.requires_action = True
                 metadata_event.summary = (
-                    "Rejected invalid Canvas file: "
+                    "Rejected invalid course file: "
                     f"{result.record.validation_error or 'validation failed'}."
                 )
                 return None
@@ -710,39 +742,10 @@ class SyncService:
             db.flush()
             return event
         if result.record.version_number > 1:
-            if isinstance(adapter, CanvasAdapter) and metadata_event is not None:
-                # Preserve the historical persisted type for existing consumers;
-                # user-facing APIs normalize this semantic to FILE_CHANGE.
-                metadata_event.change_type = "CANVAS_FILE_UPDATED"
-                metadata_event.summary = (
-                    "Canvas file content changed; saved version "
-                    f"{result.record.version_number}."
-                )
-                return None
-            event = ChangeEvent(
-                source_item_id=item.id,
-                change_type="FILE_CHANGE",
-                importance=(
-                    "important"
-                    if effective_file_type(result.record, self.settings.file_rules_config) in {"homework", "reading"}
-                    else "minor"
-                ),
-                requires_action=effective_file_type(result.record, self.settings.file_rules_config) in {"homework", "reading"},
-                summary=(
-                    "File content changed; saved version "
-                    f"{result.record.version_number}."
-                ),
-                semantic_key=stable_change_key(
-                    item.id,
-                    "FILE_CHANGE",
-                    latest.sha256 if latest else None,
-                    result.record.sha256,
-                ),
-            )
-            db.add(event)
-            db.flush()
-            return event
-        # First discovery belongs in Files, not in the student-facing Changes stream.
+            # Version history remains available in Files, but replacements are
+            # not new-file reports under the restricted Changes policy.
+            return None
+        # The NEW_FILE observation already links the new normalized snapshot.
         return None
 
     @staticmethod
@@ -912,9 +915,7 @@ class SyncService:
             )
             db.add(pending)
         pending.source_item_id = item.id
-        pending.state = (
-            "FAILED" if raw.fetch_status == "auth_failed" else "AUTH_REQUIRED"
-        )
+        pending.state = {"auth_required": "AUTH_REQUIRED", "not_found": "DISCOVERED"}.get(raw.fetch_status, "FAILED")
         pending.last_attempt_at = utcnow()
         pending.last_error_code = raw.fetch_status
         pending.metadata_json = raw.structured
@@ -1011,6 +1012,9 @@ class SyncService:
                 if structured.get("description_state") == "missing" and "description" in previous:
                     structured["description"] = previous["description"]
                     structured["description_state"] = "retained"
+                    if "attachment_file_ids" in previous:
+                        structured["attachment_file_ids"] = previous["attachment_file_ids"]
+                        retained.append("attachment_file_ids")
                     raw.normalized_text = old_snapshot.normalized_text
                     retained.append("description")
                 if structured.get("due_at_state") == "missing":
@@ -1087,27 +1091,37 @@ class SyncService:
             old_data, raw.structured
         )
         provider_summary = None
-        if raw.source_type in {"gradescope", "prairielearn"}:
+        if raw.item_type == "assignment" and is_grade_release(old_data, raw.structured):
+            change_type = f"{raw.source_type.upper()}_GRADE_RELEASED"
+            importance, requires_action = "important", False
+            provider_summary = "A new grade was released."
+        elif raw.source_type in {"gradescope", "prairielearn"}:
             from app.services.provider_changes import provider_change
             semantic = provider_change(old_data, raw.structured)
             if semantic is None:
                 return None, item
             change_type, importance, requires_action, provider_summary = semantic
-        if raw.source_type == "canvas" and (
+        if not change_type.endswith("_GRADE_RELEASED") and raw.source_type == "canvas" and (
             raw.source_name.startswith("canvas:")
             or (old_data is None and raw.item_type in {"assignment", "announcement"})
         ):
             change_type, importance, requires_action = self._canvas_change(
                 raw, old_data, change_type, importance, requires_action
             )
+        if raw.item_type in {"file", "website_file"}:
+            # Keep metadata changes as download triggers, not visible reports.
+            change_type = "NEW_FILE" if old_data is None or change_type == "NEW_FILE" else "FILE_METADATA_UPDATED"
+        elif raw.item_type == "announcement" and old_data is None:
+            change_type = "NEW_ANNOUNCEMENT"
         # Canvas file metadata is a download trigger, not a user-facing event.
         # Keep a provisional event so _sync_file can promote it only when the
         # downloaded SHA really changes; unchanged signed-URL churn is removed.
         provisional_canvas_file = (
-            raw.source_type == "canvas"
-            and raw.item_type == "file"
-            and change_type == "CANVAS_FILE_METADATA_UPDATED"
+            raw.item_type in {"file", "website_file"}
+            and change_type == "FILE_METADATA_UPDATED"
         )
+        if not is_reportable_change_type(change_type) and not provisional_canvas_file:
+            return None, item
         if not should_emit_change(change_type, old_data, raw.structured) and not provisional_canvas_file:
             return None, item
         semantic_key = stable_change_key(

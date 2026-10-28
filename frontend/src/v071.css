@@ -35,3 +35,7 @@
   .work-card.task-interactive, .task-node circle { transition: none; }
   .work-card.has-task-target:hover, .work-card.has-task-target:active, .work-card.has-task-target:focus-within { transform: none; }
 }
+.work-actions { flex-wrap: wrap; gap: 8px; }
+.assignment-files { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.assignment-files select { min-width: 0; width: min(220px, 100%); max-width: 100%; }
+.assignment-files button { white-space: normal; max-width: 100%; }

@@ -1,6 +1,5 @@
 import type { TodayWork } from "./types";
 import { formatUiucDateTime } from "./timezone";
-import { taskTarget } from "./taskNavigation";
 import { SubmissionStatus } from "./SubmissionStatus";
 
 export function ProviderFacts({ facts }: { facts: TodayWork["provider_facts"] }) {
@@ -12,7 +11,13 @@ export function ProviderFacts({ facts }: { facts: TodayWork["provider_facts"] })
       <p><SubmissionStatus state={row.submission_state} /></p>
       <p>Due: {row.due_at ? formatUiucDateTime(row.due_at) : "unknown"}</p>
       {row.late_due_at && <p>Late cutoff: {formatUiucDateTime(row.late_due_at)}</p>}
-      {taskTarget({source_url: row.direct_assignment_url}) && <a href={taskTarget({source_url: row.direct_assignment_url})!} target="_blank" rel="noopener noreferrer">Open provider assignment</a>}
+      <p className="assignment-description-summary"><span>AI summary: </span>{row.description_summary || ({
+        unavailable: "No assignment description is available.",
+        needs_connection: "Test the selected AI connection in Settings to generate a summary.",
+        failed: "AI summary unavailable. The background generation failed.",
+        pending: "Generating assignment summary…",
+        ready: "AI summary unavailable.",
+      }[row.description_summary_status || "pending"])}</p>
     </div>)}
   </details>;
 }

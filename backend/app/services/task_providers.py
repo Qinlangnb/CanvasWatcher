@@ -38,21 +38,29 @@ def task_provider_facts(db, task_id):
     result = []
     for item in items:
         structured = latest_structured(db, item.id)
-        facts = structured.get("provider_facts")
-        if item.source_type == "canvas":
-            submission = structured.get("submission") or {}
-            state = "graded" if submission.get("graded_at") or submission.get("grade") is not None else (
-                "submitted" if submission.get("submitted_at") or submission.get("workflow_state") in {"submitted", "pending_review"}
-                else submission.get("workflow_state") or "unknown")
-            facts = {"provider": "canvas", "due_at": structured.get("due_at"), "submission_state": state,
-                     "submitted_at": submission.get("submitted_at"), "direct_assignment_url": item.url}
-        if isinstance(facts, dict):
-            # Explicit allowlist: arbitrary provider HTML/private fields never enter AI or UI.
-            allowed = {key: facts.get(key) for key in ("provider", "provider_course_id", "provider_assignment_id",
-                "due_at", "late_due_at", "personal_due_at", "submission_state", "submitted_at",
-                "score", "max_score", "grade_published", "direct_assignment_url", "evidence")}
-            result.append({**allowed, "source_item_id": item.id, "source_url": item.url, "is_deleted": item.is_deleted})
+        fact = provider_fact(item, structured)
+        if fact is not None:
+            result.append(fact)
     return result
+
+
+def provider_fact(item, structured):
+    """Normalize already-loaded evidence without database access."""
+    facts = structured.get("provider_facts")
+    if item.source_type == "canvas":
+        submission = structured.get("submission") or {}
+        state = "graded" if submission.get("graded_at") or submission.get("grade") is not None else (
+            "submitted" if submission.get("submitted_at") or submission.get("workflow_state") in {"submitted", "pending_review"}
+            else submission.get("workflow_state") or "unknown")
+        facts = {"provider": "canvas", "due_at": structured.get("due_at"), "submission_state": state,
+                 "submitted_at": submission.get("submitted_at"), "direct_assignment_url": item.url}
+    if not isinstance(facts, dict):
+        return None
+    # Explicit allowlist: arbitrary provider HTML/private fields never enter AI or UI.
+    allowed = {key: facts.get(key) for key in ("provider", "provider_course_id", "provider_assignment_id",
+        "due_at", "late_due_at", "personal_due_at", "submission_state", "submitted_at",
+        "score", "max_score", "grade_published", "direct_assignment_url", "evidence")}
+    return {**allowed, "source_item_id": item.id, "source_url": item.url, "is_deleted": item.is_deleted}
 
 
 def terminal_state(facts):

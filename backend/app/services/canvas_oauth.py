@@ -1,4 +1,4 @@
-"""Institution-scoped OAuth; access/refresh tokens live in memory only."""
+"""Institution-scoped OAuth; credential store owns optional encrypted persistence."""
 
 import asyncio
 import secrets
@@ -20,11 +20,22 @@ class OAuthError(ValueError):
 def configured(settings) -> bool:
     try:
         base, callback = urlsplit(settings.canvas_base_url), urlsplit(settings.canvas_oauth_redirect_uri)
+        public_base = urlsplit(settings.watcher_public_base)
+        loopback_callback = (
+            callback.scheme == "http" and callback.hostname in {"localhost", "127.0.0.1"}
+            and callback.port and callback.path == "/api/auth/canvas/oauth/callback"
+        )
+        public_callback = (
+            settings.watcher_public_base == f"https://{public_base.netloc}/watcher"
+            and public_base.hostname and not public_base.username and not public_base.password
+            and callback.scheme == "https" and callback.netloc == public_base.netloc
+            and callback.path == "/watcher/api/auth/canvas/oauth/callback"
+        )
         return bool(settings.canvas_oauth_client_id and settings.canvas_oauth_client_secret.get_secret_value()
             and base.scheme == "https" and base.hostname and not base.username and not base.password
-            and callback.scheme == "http" and callback.hostname in {"localhost", "127.0.0.1"}
-            and callback.port and callback.path == "/api/auth/canvas/oauth/callback"
-            and not callback.query and not callback.fragment and not callback.username)
+            and (loopback_callback or public_callback)
+            and not callback.query and not callback.fragment and not callback.username
+            and not callback.password)
     except ValueError:
         return False
 

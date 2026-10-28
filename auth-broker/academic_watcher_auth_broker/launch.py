@@ -1,19 +1,19 @@
 """Fixed start-only URI activation; supervise only owned broker/tunnel children."""
-from contextlib import contextmanager
-import ipaddress
 import importlib.util
+import ipaddress
 import json
 import os
-from pathlib import Path
 import socket
 import sys
 import threading
 import time
 import urllib.request
+from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
+from .config import backend_base, frontend_origin, loopback_origin
 from .windows_process import OwnedChild
-from .config import frontend_origin, loopback_origin
 
 START_URIS = frozenset(('academicwatcher://start', 'academicwatcher://start/'))
 
@@ -79,7 +79,7 @@ def lan_origin(value):
 
 
 def origin_from_metadata(data):
-    # E5 e5_service.write_state emits both fields. Use IP as the authority and
+    # The remote host metadata supplies both fields. Use IP as the authority and
     # reject an inconsistent optional convenience origin instead of trusting it.
     address = ipaddress.IPv4Address(data['ip'])
     origin = lan_origin(f'https://{address}:8080')
@@ -214,6 +214,58 @@ class Supervisor:
         return 'RUNNING'
 
 
+def gateway_ready(backend):
+    import httpx
+
+    from .resolve import PinnedSyncTransport
+    try:
+        with httpx.Client(transport=PinnedSyncTransport(backend), trust_env=False, timeout=5,
+                          follow_redirects=False) as client:
+            response = client.get(backend + '/api/health')
+        return response.status_code == 200 and response.json().get('status') == 'ok'
+    except Exception:
+        return False
+
+
+class RemoteSupervisor:
+    """Public HTTPS gateway (Azure): no tunnel or LAN discovery, only the owned broker child."""
+
+    def __init__(self, config, *, child=OwnedChild, ready=gateway_ready):
+        if set(config) != {'python', 'backend', 'origin'}:
+            raise ValueError('Invalid launcher config schema')
+        self.python = safe_file(config['python'])
+        self.backend = backend_base(config['backend'])
+        if not self.backend.startswith('https://'):
+            raise ValueError('Remote mode requires an HTTPS gateway')
+        self.origin = frontend_origin(config['origin'])
+        if urlsplit(self.origin).scheme != 'https':
+            raise ValueError('Remote mode requires an HTTPS frontend origin')
+        self.child = child
+        self.ready = ready
+        self.broker = None
+
+    def close(self):
+        if self.broker:
+            self.broker.stop(); self.broker = None
+
+    def tick(self, now):
+        if not self.ready(self.backend):
+            return 'CALLBACK_UNAVAILABLE'
+        if not self.broker or self.broker.poll() is not None:
+            self.close()
+            if not port_free(8765):
+                raise PortOccupied('Broker port occupied by an unmanaged application')
+            env = dict(os.environ, AW_BROKER_BACKEND=self.backend, AW_BROKER_PORT='8765',
+                       AW_BROKER_ORIGINS=self.origin)
+            self.broker = self.child([self.python, '-m', 'academic_watcher_auth_broker'], env=env)
+            return 'STARTING'
+        return 'RUNNING'
+
+
+def supervisor_for(config):
+    return RemoteSupervisor(config) if 'origin' in config else Supervisor(config)
+
+
 def record(root, state):
     # Fixed categories only. Never log URI, command line, HTTP content or exception text.
     temporary = root / ('status-' + str(os.getpid()) + '.new')
@@ -234,7 +286,7 @@ def run(args):
         if not acquired:
             return
         config = json.loads((root / 'config.json').read_text())
-        supervisor = Supervisor(config)
+        supervisor = supervisor_for(config)
         delay = 2
         notified = False
         try:

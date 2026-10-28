@@ -40,6 +40,24 @@ def task_work_summary(
             .order_by(TaskWorkSession.started_at, TaskWorkSession.id)
         )
     )
+    return _work_summary(task, rows, now, include_sessions=include_sessions)
+
+
+def task_work_summaries(db: Session, tasks: list[Task], now: datetime) -> dict[int, dict]:
+    """One request's work totals, without one session query per task."""
+    grouped: dict[int, list[TaskWorkSession]] = {task.id: [] for task in tasks}
+    ids = list(grouped)
+    for offset in range(0, len(ids), 500):
+        for row in db.scalars(select(TaskWorkSession).where(
+            TaskWorkSession.task_id.in_(ids[offset:offset + 500])
+        ).order_by(TaskWorkSession.started_at, TaskWorkSession.id)):
+            grouped[row.task_id].append(row)
+    return {task.id: _work_summary(task, grouped[task.id], now, include_sessions=False)
+            for task in tasks}
+
+
+def _work_summary(task: Task, rows: list[TaskWorkSession], now: datetime | None,
+                  *, include_sessions: bool) -> dict:
     total_seconds = sum(session_seconds(row, now) for row in rows)
     tracked_minutes = max(0, round(total_seconds / 60))
     adjustment = int(task.manual_time_adjustment_minutes or 0)

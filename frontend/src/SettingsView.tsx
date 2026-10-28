@@ -9,6 +9,7 @@ import { AuthBrokerHealth, BrowserSignIn, CanvasOAuthSignIn, ProviderSourceForm 
 import { CommitButton } from "./CommitButton";
 import { SourceStatusBadge } from "./SourceStatusBadge";
 import { CanvasCredentialSlots } from "./CanvasCredentialSlots";
+import { CredentialStorageNotice } from "./CredentialStorage";
 import { ProviderCourses } from "./ProviderCourses";
 import { VisualCalendar, type EventDraft } from "./VisualCalendar";
 import { DateTime } from "luxon";
@@ -213,6 +214,7 @@ function SourcesSettings({
           Add New Source
         </button>
       </div>
+      <CredentialStorageNotice />
       <AuthBrokerHealth />
       {!connections.data?.length ? (
         <div className="empty">
@@ -289,7 +291,7 @@ function ConnectionCard({
   if (connection.source_type === "gradescope" || connection.source_type === "prairielearn") {
     return <article className="source-connection-card">
       <div className="source-card-heading"><div><p className="eyebrow">READ-ONLY SOURCE</p><h3>{connection.name}</h3><p>{connection.base_url}</p></div><SourceStatusBadge state={connection.state} /></div>
-      <p>Browser authentication · Session stays in backend memory.</p>
+      <p>Browser authentication · Storage follows the server credential policy above.</p>
       {connection.credential_id && <BrowserSignIn credentialId={connection.credential_id} provider={connection.source_type} />}
       {connection.source_type === "gradescope" ? <ProviderCourses connectionId={connection.id} /> : <p>Student course parsing awaits representative course data; authentication can be tested independently.</p>}
     </article>;
@@ -468,7 +470,7 @@ function WebsiteForm({ connection, terms, done }: { connection?: SourceConnectio
     {form.authentication_method === "ntlm" && <>
       <label>Username<input autoComplete="username" required={!connection || !!password} placeholder="Your website account (domain\\username if required)" value={username} onChange={event => setUsername(event.target.value)} /></label>
       <label>Password<input type="password" autoComplete="off" required={!connection} value={password} onChange={event => setPassword(event.target.value)} /></label>
-      <small>Kept only in backend memory. {connection ? "Leave blank to keep a matching loaded password; after restart, enter it again for protected access. Label-only edits do not require a password." : "Public pages alone do not verify protected access."}</small>
+      <small>Storage follows the server credential policy. {connection ? "Leave blank to keep a matching loaded password. Label-only edits do not require a password." : "Public pages alone do not verify protected access."}</small>
       {profile?.last_error_code === "protected_access_not_verified" && <p>Public website reachable. Protected access not yet verified.</p>}
       <details><summary>Advanced access settings</summary>
         <label>Protected resource path (optional, usually detected)<input placeholder="Leave empty to use the course website path" value={form.protected_path_prefix} onChange={event => set("protected_path_prefix", event.target.value)} /></label>
@@ -990,15 +992,15 @@ function CredentialForm({
         </label>
       )}
       {canvas && mode === "browser_session" && <details className="canvas-session-guide">
-        <summary>如何获取 Browser Session（复制 cURL）</summary>
+        <summary>How to get a Browser Session (copy as cURL)</summary>
         <ol>
-          <li>在 Chrome / Edge 中登录同一 Canvas 账号，打开 Canvas 页面。</li>
-          <li>按 F12 → Network（网络），刷新页面，选择 Canvas 同域下成功的页面或 API 请求。</li>
-          <li>右键请求 → Copy → Copy as cURL（优先 bash）；不要选择 Copy as PowerShell。</li>
-          <li>把完整命令粘贴到下方，点击 Verify and sync。无需在终端执行命令。</li>
+          <li>Sign in to Canvas in Chrome or Edge and open a Canvas page.</li>
+          <li>Press F12, open Network, refresh the page, and select a successful Canvas page or API request.</li>
+          <li>Right-click the request, then choose Copy → Copy as cURL (bash). Avoid Copy as PowerShell.</li>
+          <li>Paste the complete command below and click Verify and sync. You do not need to run it in a terminal.</li>
         </ol>
-        <p>复制内容须包含 Cookie（-b 或 Cookie 请求头）。仅粘贴到本机此表单，不要发到聊天、截图或共享文件；导入器只解析 Cookie，不执行 cURL。</p>
-        <a href="https://developer.chrome.com/docs/devtools/network/reference#copy" target="_blank" rel="noreferrer">Chrome DevTools 复制请求说明</a>
+        <p>The copied request must include a Cookie (-b or a Cookie header). Paste it only into this form; do not share it in chats, screenshots, or files. The importer extracts the Cookie and never runs cURL.</p>
+        <a href="https://developer.chrome.com/docs/devtools/network/reference#copy" target="_blank" rel="noreferrer">Chrome DevTools request copy guide</a>
       </details>}
       <label>
         {canvas

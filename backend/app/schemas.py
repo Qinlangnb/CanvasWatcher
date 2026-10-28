@@ -296,7 +296,13 @@ class ChangeAnalysisData(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class TaskAttachmentOut(BaseModel):
+    file_id: int
+    filename: str
+
+
 class TodayWorkOut(BaseModel):
+    attachments: list[TaskAttachmentOut] = Field(default_factory=list)
     provider_facts: list[dict[str, Any]] = Field(default_factory=list)
     submission_state: str | None = None
     state_revision: int = 0
@@ -478,6 +484,7 @@ class CredentialVerificationOut(CredentialProfileOut):
 
 class CanvasAuthStatusOut(BaseModel):
     configured: bool
+    credential_storage: Literal['memory', 'server_encrypted'] = 'memory'
     auth_mode: str | None = None
     credential_state: str
     connection_state: str = "AUTH_REQUIRED"

@@ -40,7 +40,7 @@ export function CanvasCredentialSlots({ status, busy, formatDate, onImport, onRe
             </div>
           </div>
           {method === "pat" && slot?.origin === "environment" && <small className="canvas-environment-note">
-            Removing disables this PAT until restart; .env is unchanged.
+            {status?.credential_storage === "server_encrypted" ? "Removing disables this PAT across restarts; .env is unchanged." : "Removing disables this PAT until restart; .env is unchanged."}
           </small>}
         </article>;
       })}

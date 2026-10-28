@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.presets import PROVIDERS, provider_choices, provider_for_url
 from app.ai.provider import AnthropicProvider, OpenAICompatibleProvider
+from app.auth.vault import VaultError, valid_text
 from app.db import AppSetting
 
 _lock = RLock()
@@ -25,12 +26,65 @@ class AIProbeSecretStore:
         self.base_url = ""
         self.generation = 0
         self.verified: tuple | None = None
+        self._vault = None
+
+    @property
+    def persistence_enabled(self):
+        return self._vault is not None
+
+    def _save(self, key, base_url, verified):
+        if self._vault:
+            self._vault.write('ai_credential', {'key': key, 'base_url': base_url,
+                                               'verified_config': list(verified[:3]) if verified else None})
+
+    def configure_persistence(self, vault):
+        with _lock:
+            try:
+                saved = vault.read('ai_credential') if vault else {}
+                if saved and set(saved) != {'key', 'base_url', 'verified_config'}:
+                    raise VaultError()
+                key = saved.get('key')
+                base = saved.get('base_url', '')
+                verified = saved.get('verified_config')
+                if key is not None:
+                    valid_text(key)
+                    if not key.isascii() or any(c.isspace() for c in key):
+                        raise VaultError()
+                if not isinstance(base, str) or (base and not provider_for_url(base)):
+                    raise VaultError()
+                if verified is not None:
+                    if (not isinstance(verified, list) or len(verified) != 3
+                            or any(not isinstance(value, str) for value in verified)
+                            or not provider_for_url(verified[0])
+                            or (key is not None and verified[0] != base)):
+                        raise VaultError()
+            except Exception:
+                raise VaultError() from None
+            self._vault = vault
+            self._api_key, self.base_url = key, base
+            self.generation += 1
+            self.verified = (*verified, self.generation) if verified else None
+
+    def invalidate_verification(self, *, advance=False):
+        with _lock:
+            self._save(self._api_key, self.base_url, None)
+            self.verified = None
+            if advance:
+                self.generation += 1
+
+    def mark_verified(self, identity):
+        with _lock:
+            if identity[-1] != self.generation:
+                raise AISettingsError('Connection changed during the test. Please test again.')
+            self._save(self._api_key, self.base_url, identity)
+            self.verified = identity
 
     def set(self, value: str, base_url: str = "") -> None:
         candidate = value.strip()
         if not candidate or any(c.isspace() for c in candidate) or not candidate.isascii():
             raise AISettingsError("Enter an API key without spaces, newlines or a Bearer prefix.")
         with _lock:
+            self._save(candidate, base_url, None)
             self._api_key = candidate
             self.base_url = base_url
             self.generation += 1
@@ -43,6 +97,7 @@ class AIProbeSecretStore:
 
     def clear(self) -> None:
         with _lock:
+            self._save(None, '', None)
             self._api_key = None
             self.base_url = ""
             self.generation += 1
@@ -85,6 +140,7 @@ def get_ai_probe_settings(db: Session) -> dict:
             "needs_provider_selection": bool(base and not provider),
             "model_id": value.get("model_id", ""),
             "credential_loaded": loaded if provider else False,
+            "credential_storage": 'server_encrypted' if ai_probe_secrets.persistence_enabled else 'memory',
             "connected_to_live_ai": ready, "calendar_chat_ready": ready, "chat_ready": ready,
         }
 
@@ -116,7 +172,7 @@ def set_ai_probe_settings(db: Session, base_url: str, model_id: str, provider_id
         if previous.get("base_url") != normalized:
             ai_probe_secrets.clear()
         elif not unchanged:
-            ai_probe_secrets.verified = None
+            ai_probe_secrets.invalidate_verification()
         return get_ai_probe_settings(db)
 
 
@@ -199,8 +255,7 @@ async def probe_selected_model(db: Session, model_id: str | None = None) -> dict
             provider = _provider(db, model_id)
             if not provider.model or provider.model != value.get("model_id"):
                 raise AISettingsError("Save the selected model ID before testing it.")
-            ai_probe_secrets.verified = None
-            ai_probe_secrets.generation += 1
+            ai_probe_secrets.invalidate_verification(advance=True)
             identity = _identity(value)
         result = await provider.probe()
         if not result.get("success"):
@@ -212,7 +267,7 @@ async def probe_selected_model(db: Session, model_id: str | None = None) -> dict
             row.value_json = {**row.value_json, "callability_verified": True,
                               "verified_model_id": provider.model, "verified_at": datetime.now(UTC).isoformat()}
             db.commit()
-            ai_probe_secrets.verified = identity
+            ai_probe_secrets.mark_verified(identity)
         return {**result, "message": None}
     except Exception as error:
         return {"success": False, "latency_ms": None, "model_id": model_id or get_ai_probe_settings(db)["model_id"],

@@ -13,9 +13,9 @@ from app.services.normalizer import normalize_text
 from app.sources.canvas_client import CanvasClient, CanvasDownload
 
 _COURSE_FILE_PATH = re.compile(
-    r"/(?:api/v1/)?courses/(?P<course_id>\d+)/files/(?P<file_id>\d+)(?:/download)?/?$"
+    r"/(?:api/v1/)?courses/(?P<course_id>\d+)/files/(?P<file_id>\d+)(?:/(?:download|preview))?/?$"
 )
-_GLOBAL_FILE_PATH = re.compile(r"/api/v1/files/(?P<file_id>\d+)/?$")
+_GLOBAL_FILE_PATH = re.compile(r"/(?:api/v1/)?files/(?P<file_id>\d+)(?:/(?:download|preview))?/?$")
 
 
 def canvas_file_id_from_reference(
@@ -127,6 +127,7 @@ class CanvasAdapter:
         self.errors: dict[str, str] = {}
         self.error_details: dict[str, dict] = {}
         self.successful_item_types: set[str] = set()
+        self.unavailable_resources: list[dict[str, Any]] = []
 
     async def discover_courses(self) -> list[DiscoveredCourse]:
         rows = await self.client.get_all_pages(
@@ -203,6 +204,7 @@ class CanvasAdapter:
         self.errors = {}
         self.error_details = {}
         self.successful_item_types = set()
+        self.unavailable_resources = []
         specs = [
             (
                 "assignment_group",
@@ -254,7 +256,9 @@ class CanvasAdapter:
                 *(self._page_detail(course_id, row) for row in page_rows)
             )
             grouped["page"] = [row for row in details if row is not None]
-            await self._merge_page_files(course_id, grouped)
+        # Assignment descriptions can link to files hidden from the Files index.
+        # Run even when this course has no Pages.
+        await self._merge_page_files(course_id, grouped)
 
         module_items: list[dict[str, Any]] = []
         for module in grouped.get("module", []):
@@ -271,6 +275,8 @@ class CanvasAdapter:
                         "module_name": module.get("name"),
                     }
                 )
+
+        await self._classify_page_availability(course_id, module_items)
 
         items: list[RawSourceItem] = []
         assignment_groups = {
@@ -318,6 +324,42 @@ class CanvasAdapter:
             self._record_error("course_metadata", exc)
         return items
 
+    async def _classify_page_availability(
+        self, course_id: str, module_items: list[dict[str, Any]]
+    ) -> None:
+        """A disabled optional index is not an empty authoritative inventory."""
+        detail = self.error_details.get("page", {})
+        if (detail.get("code") != "resource_not_found" or detail.get("http_status") != 404
+                or "page" in self.successful_item_types
+                or "assignment" not in self.successful_item_types
+                or "module" not in self.successful_item_types
+                or "module_item" in self.errors
+                or any(not isinstance(row.get("type"), str) or not row["type"]
+                       or row["type"].lower() == "page" for row in module_items)):
+            return
+        try:
+            tabs = await self.client.get_all_pages(f"/api/v1/courses/{course_id}/tabs")
+        except Exception:
+            # Missing evidence must not turn a real resource error into success.
+            return
+        if not isinstance(tabs, list) or any(
+            not isinstance(tab, dict) or not isinstance(tab.get("id"), str) for tab in tabs
+        ):
+            return
+        pages_navigation = [tab for tab in tabs if tab["id"] in {"pages", "wiki"}]
+        if pages_navigation and not all(tab.get("hidden") is True for tab in pages_navigation):
+            return
+        self.unavailable_resources.append({
+            "resource": "page", "code": "unavailable", "http_status": 404,
+            "reason": "navigation_hidden" if pages_navigation else "not_in_navigation",
+            "message": "Pages index is unavailable for this account; existing pages and files are preserved.",
+            "tabs_checked": True, "modules_checked": True, "module_page_references": 0,
+        })
+        self.errors.pop("page", None)
+        self.error_details.pop("page", None)
+        self.successful_item_types.discard("page")
+        self.successful_item_types.discard("file")
+
     async def _assignment_detail(self, course_id: str, row: dict) -> dict:
         if "due_at" in row and "description" in row:
             return row
@@ -341,6 +383,22 @@ class CanvasAdapter:
     ) -> None:
         contexts: dict[str, list[str]] = {}
         pages: dict[str, list[str]] = {}
+        assignments: dict[str, list[str]] = {}
+        assignment_titles: dict[str, list[str]] = {}
+        if any(kind in self.errors for kind in ("assignment", "assignment_detail", "page")):
+            # The Files index alone is not a complete inventory of embedded files.
+            self.successful_item_types.discard("file")
+        for assignment in grouped.get("assignment", []):
+            file_ids = extract_canvas_page_file_ids(
+                assignment.get("description"), course_id=course_id, base_url=self.base_url
+            )
+            # Omit the field when description fetch failed: do not erase saved links.
+            if "description" in assignment:
+                assignment["attachment_file_ids"] = file_ids
+            for file_id in file_ids:
+                contexts.setdefault(file_id, [])
+                assignments.setdefault(file_id, []).append(str(assignment["id"]))
+                assignment_titles.setdefault(file_id, []).append(str(assignment.get("name") or "Assignment"))
         for page in grouped.get("page", []):
             title = str(page.get("title") or page.get("url") or "Canvas Page")
             slug = str(page.get("url") or title)
@@ -362,6 +420,8 @@ class CanvasAdapter:
                 *(self._page_file_detail(course_id, file_id) for file_id in missing_ids)
             )
             for row in details:
+                if row is None:
+                    self.successful_item_types.discard("file")
                 if row is not None and row.get("id") is not None:
                     known[str(row["id"])] = row
                     file_rows.append(row)
@@ -371,7 +431,9 @@ class CanvasAdapter:
             if row is None:
                 continue
             row["page_context_titles"] = sorted(set(titles))
-            row["discovered_via_pages"] = sorted(set(pages[file_id]))
+            row["discovered_via_pages"] = sorted(set(pages.get(file_id, [])))
+            row["discovered_via_assignments"] = sorted(set(assignments.get(file_id, [])))
+            row["assignment_context_titles"] = sorted(set(assignment_titles.get(file_id, [])))
 
     async def _page_file_detail(
         self, course_id: str, file_id: str
@@ -380,9 +442,10 @@ class CanvasAdapter:
             payload = await self.client.get_json(
                 f"/api/v1/courses/{course_id}/files/{file_id}"
             )
-            if isinstance(payload, dict):
-                self.successful_item_types.add("file")
+            if (isinstance(payload, dict) and str(payload.get("id")) == file_id
+                    and str(payload.get("course_id", course_id)) == str(course_id)):
                 return payload
+            raise ValueError("Canvas file detail identity mismatch")
         except Exception as exc:
             self._record_error(f"page_file:{file_id}", exc)
         return None

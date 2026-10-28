@@ -127,7 +127,8 @@ class AuthService:
             profile.last_error_code = "token_expired"
         effective = self.store.get_canvas(profile.credential_id)
         if effective:
-            profile.metadata_json = {**metadata, "auth_mode": effective.auth_mode.value, "auth_source": "memory"}
+            profile.metadata_json = {**metadata, "auth_mode": effective.auth_mode.value,
+                                     "auth_source": 'server_encrypted' if self.store.persistence_enabled else 'memory'}
             profile.state = "ACTIVE"
         if status.state in {
             ExpirationState.WARNING,
@@ -170,7 +171,8 @@ class AuthService:
         return notification
 
     def reset_after_restart(self, db: Session) -> None:
-        self.store.clear_all()
+        if not self.store.persistence_enabled:
+            self.store.clear_all()
         self.fetcher.ntlm.invalidate_all()
         db.execute(
             update(CredentialProfile)
@@ -182,21 +184,30 @@ class AuthService:
                 CredentialProfile.credential_id == canvas_profile_id(db, self.settings)
             )
         )
+        loaded_canvas = bool(canvas_profile and self.store.get_canvas(canvas_profile.credential_id))
         if canvas_profile:
             canvas_profile.state = "AUTH_REQUIRED"
             canvas_profile.metadata_json = {
                 **(canvas_profile.metadata_json or {}),
-                "auth_source": "not_loaded",
+                "auth_source": 'server_encrypted' if loaded_canvas else 'not_loaded',
             }
         stored_mode = (
             (canvas_profile.metadata_json or {}).get("auth_mode")
             if canvas_profile
             else None
         )
-        if canvas_profile and stored_mode == CanvasAuthMode.BROWSER_SESSION.value:
+        if canvas_profile and not loaded_canvas and stored_mode == CanvasAuthMode.BROWSER_SESSION.value:
             self.store.select_canvas_mode(
                 canvas_profile.credential_id, CanvasAuthMode.BROWSER_SESSION
             )
+        if self.store.persistence_enabled:
+            from app.auth.provider_sessions import provider_sessions
+            for profile in db.scalars(select(CredentialProfile)):
+                available = (provider_sessions.get(profile.credential_id) is not None
+                    if profile.auth_type == 'provider_session' else self._credential_available(profile))
+                if available:
+                    # Reusable credential presence; source health is still checked by sync.
+                    profile.state = 'ACTIVE'
         db.commit()
 
     def canvas_status(self, db: Session) -> dict:
@@ -207,7 +218,8 @@ class AuthService:
             )
         )
         if profile is None:
-            return {"configured": False, "credential_state": "NOT_CONFIGURED"}
+            return {"configured": False, "credential_state": "NOT_CONFIGURED",
+                    "credential_storage": 'server_encrypted' if self.store.persistence_enabled else 'memory'}
         sources = list(
             db.scalars(
                 select(CourseSource).where(CourseSource.source_type == "canvas")
@@ -237,8 +249,10 @@ class AuthService:
             "preferred_method": self.store.preferred_mode(profile.credential_id).value, "effective_method": effective,
             "backup_ready": sum(row["present"] and row["state"] == "VALID" for row in credentials.values()) >= 2,
             "credentials": credentials, "fallback": self.store.fallback_status(profile.credential_id),
+            "credential_storage": 'server_encrypted' if self.store.persistence_enabled else 'memory',
             "source_health": source_health,
-            "verified": profile.state == "ACTIVE" and available,
+            "verified": profile.state == "ACTIVE" and available and (
+                not self.store.persistence_enabled or credentials[effective]['state'] == 'VALID'),
             "verified_at": profile.last_verified_at,
             "account_id": str(account.get("id")) if account.get("id") else None,
             "account_display_name": account.get("name") or profile.username,

@@ -1,0 +1,39 @@
+[Unit]
+Description=Academic Watcher identity gateway (127.0.0.1:18780, behind Caddy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=aw-gateway
+Group=aw-gateway
+StateDirectory=academic-watcher-gateway
+StateDirectoryMode=0700
+Environment=AW_GATEWAY_DATABASE=/var/lib/academic-watcher-gateway/identity.db
+Environment=AW_GATEWAY_STATIC_ROOT=/opt/academic-watcher/frontend/dist
+Environment=AW_GATEWAY_SOCKET_ROOT=/run/academic-watcher
+Environment=AW_GATEWAY_TOKEN_ROOT=/etc/academic-watcher/tenant-tokens
+Environment=AW_GATEWAY_CSRF_KEY_FILE=%d/csrf.key
+EnvironmentFile=/etc/academic-watcher/public.env
+LoadCredential=csrf.key:/etc/academic-watcher/gateway-csrf.key
+ExecStart=/opt/academic-watcher/gateway-venv/bin/uvicorn aw_gateway.main:create_production_app --factory --host 127.0.0.1 --port 18780 --workers 1 --no-access-log --no-proxy-headers
+Restart=on-failure
+RestartSec=3
+MemoryMax=400M
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/var/lib/academic-watcher -/etc/academic-watcher/tenants
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

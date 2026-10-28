@@ -8,7 +8,8 @@ const source = readFileSync(new URL('../src/responsive.css', import.meta.url), '
 const css = postcss.parse(source);
 function declarations(selector, media) {
   const result = {};
-  css.walkRules(selector, rule => {
+  css.walkRules(rule => {
+    if (!rule.selectors.includes(selector)) return;
     if (media && rule.parent.params !== media) return;
     rule.walkDecls(decl => { result[decl.prop] = decl.value; });
   });
@@ -24,6 +25,21 @@ test('completed Today rows opt out of execution-card minimum height at every wid
   assert.match(today, /className="work-card completed-work-card"/);
   assert.match(today, /className="cards completed-work-list"/);
   assert.equal(declarations('.work-card.completed-work-card')['min-height'], '0');
+});
+test('Today work and completed cards have a shared fixed width that can shrink', () => {
+  for (const selector of ['.today-grid', '.completed-work-list']) {
+    const layout = declarations(selector);
+    assert.equal(layout.display, 'flex');
+    assert.equal(layout['flex-wrap'], 'wrap');
+    assert.equal(layout['align-items'], 'flex-start');
+  }
+  for (const selector of ['.today-grid > .work-card', '.completed-work-list > .work-card']) {
+    const card = declarations(selector);
+    assert.equal(card.flex, '0 1 520px');
+    assert.equal(card.width, '520px');
+    assert.equal(card['max-width'], '100%');
+    assert.equal(card['min-width'], '0');
+  }
 });
 test('sidebar and main switch together at 900px, including 821–900 gap', () => {
   const sidebar = declarations('.app-shell > .app-sidebar', '(max-width: 900px)');

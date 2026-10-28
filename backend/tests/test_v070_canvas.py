@@ -96,6 +96,22 @@ def test_oauth_requires_configuration_and_state_is_scoped_single_use():
         flow.consume(settings, query["state"][0])
 
 
+def test_oauth_allows_exact_public_watcher_redirect_only():
+    base = oauth_settings().model_copy(update={
+        "watcher_public_base": "https://watcher.example.com/watcher",
+        "canvas_oauth_redirect_uri": "https://watcher.example.com/watcher/api/auth/canvas/oauth/callback",
+    })
+    assert configured(base)
+    for redirect in (
+        "http://watcher.example.com/watcher/api/auth/canvas/oauth/callback",
+        "https://evil.example/watcher/api/auth/canvas/oauth/callback",
+        "https://watcher.example.com/api/auth/canvas/oauth/callback",
+        "https://watcher.example.com/watcher/api/auth/canvas/oauth/callback?next=evil",
+        "https://watcher.example.com/watcher/api/auth/canvas/oauth/callback#fragment",
+    ):
+        assert not configured(base.model_copy(update={"canvas_oauth_redirect_uri": redirect}))
+
+
 @pytest.mark.asyncio
 async def test_oauth_exchange_probe_is_isolated_and_refresh_single_flight():
     settings = oauth_settings()

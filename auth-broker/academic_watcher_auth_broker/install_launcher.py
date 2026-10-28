@@ -1,12 +1,18 @@
 """One-time HKCU protocol registration. No admin rights or browser policy changes."""
 import argparse
 import json
-import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
-from .launch import runtime_root, safe_directory, safe_file, singleton, Supervisor
+from .launch import (
+    RemoteSupervisor,
+    Supervisor,
+    runtime_root,
+    safe_directory,
+    safe_file,
+    singleton,
+)
 
 REGISTRY = r'Software\Classes\academicwatcher'
 OWNER = 'AcademicWatcherBrokerLauncher-v1'
@@ -34,20 +40,24 @@ def existing_handler(registry):
 
 
 def install(tunnel=None, *, backend='http://127.0.0.1:8000',
-            origins=('http://localhost:8080', 'http://127.0.0.1:8080'), registry=None):
+            origins=('http://localhost:8080', 'http://127.0.0.1:8080'), remote=None, registry=None):
     if registry is None:
         import winreg as registry
     root = runtime_root()
     safe_directory(root)
     python = safe_file(sys.executable)
     pythonw = safe_file(str(Path(python).with_name('pythonw.exe')))
-    if tunnel:
+    if remote is not None:
+        installed = {'python': python, 'backend': remote[0], 'origin': remote[1]}
+        RemoteSupervisor(installed)  # Validate remote endpoints.
+    elif tunnel:
         script = safe_file(tunnel)
         safe_file(str(Path(script).with_name('migration.py')))
         installed = {'python': python, 'tunnel': script}
     else:
         installed = {'python': python, 'backend': backend, 'origins': list(origins)}
-    Supervisor(installed)  # Validate before registry/config writes.
+    if remote is None:
+        Supervisor(installed)  # Validate before registry/config writes.
     command = command_for(pythonw)
     previous = existing_handler(registry)
     if previous is not None and previous != (OWNER, command):
@@ -108,16 +118,19 @@ def uninstall():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=('install', 'stop', 'uninstall'))
-    parser.add_argument('--tunnel')
-    parser.add_argument('--backend')
-    parser.add_argument('--origins', help='Comma-separated exact frontend origins')
+    parser.add_argument('--tunnel', help='Operator-supplied pinned SSH tunnel script')
+    parser.add_argument('--backend', help='Azure: gateway base URL, e.g. https://watcher.example.com/watcher')
+    parser.add_argument('--origin', help='Azure: frontend origin, e.g. https://watcher.example.com')
+    parser.add_argument('--origins', help='Local mode: comma-separated exact frontend origins')
     args = parser.parse_args()
     try:
         if args.action == 'install':
-            if args.tunnel and (args.backend or args.origins):
-                parser.error('--tunnel cannot be combined with local backend/origins')
-            install(args.tunnel, backend=args.backend or 'http://127.0.0.1:8000',
-                    origins=(args.origins or 'http://localhost:8080,http://127.0.0.1:8080').split(','))
+            if args.origin and not args.backend or args.tunnel and (args.backend or args.origin):
+                parser.error('use local defaults, --tunnel, or --backend with --origin')
+            if args.origin:
+                install(remote=(args.backend, args.origin))
+            else:
+                install(args.tunnel, backend=args.backend or 'http://127.0.0.1:8000', origins=args.origins.split(',') if args.origins else ('http://localhost:8080', 'http://127.0.0.1:8080'))
         elif args.action == 'stop':
             stop()
         else:

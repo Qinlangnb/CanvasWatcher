@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -11,6 +12,21 @@ def loopback_origin(value: str) -> str:
             or parsed.query or parsed.fragment or parsed.port is None):
         raise ValueError("Expected an explicit loopback HTTP origin and port")
     return value.rstrip("/")
+
+
+def backend_base(value: str) -> str:
+    """Loopback backend (local/tunnel), or the public HTTPS gateway base such as https://host/watcher."""
+    parsed = urlsplit(value)
+    if parsed.scheme == "http":
+        return loopback_origin(value)
+    path = parsed.path.rstrip("/")
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or "#" in value or "?" in value
+            or (path and not re.fullmatch(r"(/[A-Za-z0-9_-]+)+", path))
+            or any(ord(c) < 33 or c == "\\" for c in value)):
+        raise ValueError("Expected a loopback HTTP origin or an HTTPS gateway base URL")
+    _ = parsed.port
+    return f"https://{parsed.netloc}{path}"
 
 
 def provider_origin(value: str) -> str:
@@ -46,7 +62,7 @@ class Config:
     profiles: Path = field(default_factory=default_profile_root)
 
     def __post_init__(self):
-        loopback_origin(self.backend_origin)
+        object.__setattr__(self, "backend_origin", backend_base(self.backend_origin))
         for origin in self.frontend_origins:
             frontend_origin(origin)
         if not self.frontend_origins or not 1024 <= self.port <= 65535:

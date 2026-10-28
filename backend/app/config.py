@@ -27,8 +27,14 @@ class Settings(BaseSettings):
     daily_study_capacity_minutes: int = Field(default=180, ge=30, le=1440)
     log_level: str = "INFO"
     scheduler_enabled: bool = True
-    cors_origins: str = "http://localhost:5173,http://localhost:8080,http://127.0.0.1:8080"
+    credential_persistence_enabled: bool = False
+    credential_vault_path: Path = Path('/data/credentials/vault.enc')
+    credential_master_key_file: Path = Path('/run/secrets/academic_watcher_credentials.key')
+    internal_gateway_auth_required: bool = False
+    internal_gateway_token_file: Path = Path('/run/secrets/academic_watcher_gateway_token')
+    cors_origins: str = "http://localhost:5173,http://localhost:8080"
     frontend_url: str = "http://localhost:8080"
+    watcher_public_base: str = ""
     auth_broker_port: int = Field(default=8765, ge=1024, le=65535)
     canvas_oauth_client_id: str = ""
     canvas_oauth_client_secret: SecretStr = SecretStr("")
@@ -53,7 +59,6 @@ class Settings(BaseSettings):
     def legacy_canvas_token(self) -> str:
         """Compatibility path for the original CANVAS_ACCESS_TOKEN setting."""
         return self.canvas_access_token.get_secret_value()
-
 
 @lru_cache
 def get_settings() -> Settings:

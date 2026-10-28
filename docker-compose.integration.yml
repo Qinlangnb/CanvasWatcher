@@ -1,0 +1,7 @@
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:8001:8000"
+  frontend:
+    ports: !override
+      - "127.0.0.1:8081:80"

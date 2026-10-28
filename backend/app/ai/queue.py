@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
@@ -23,6 +24,7 @@ from app.services.change_review import prefilter
 from app.services.notifier import NtfyNotifier
 
 _worker_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 def _hash(value: dict) -> str:
@@ -182,10 +184,11 @@ class AnalysisWorker:
             db.execute(update(AnalysisJob).where(AnalysisJob.kind == "change_importance",
                 AnalysisJob.state == "PENDING").values(state="WAITING_AI", last_error="provider_not_configured"))
         db.commit()
+        from app.services.assignment_summaries import KIND, run_summaries
         jobs = list(
             db.scalars(
                 select(AnalysisJob)
-                .where(AnalysisJob.state == "PENDING")
+                .where(AnalysisJob.state == "PENDING", AnalysisJob.kind != KIND)
                 .order_by(AnalysisJob.created_at, AnalysisJob.id)
                 .limit(limit)
             )
@@ -225,6 +228,14 @@ class AnalysisWorker:
                 elif job.kind == "change_importance":
                     self._mark_failed(db, job, type(exc).__name__)
             db.commit()
+        # Existing task/change analysis must not wait behind the optional UI
+        # summaries. Enqueue/build/DB failures are isolated too, not only model
+        # failures inside run_summaries. Never log source text or credentials.
+        try:
+            completed += await run_summaries(db, self.max_attempts, settings=self.settings)
+        except Exception as error:
+            db.rollback()
+            logger.warning("Assignment summary queue skipped: %s", type(error).__name__)
         return completed
 
     async def _task(self, db: Session, job: AnalysisJob) -> None:
@@ -301,6 +312,8 @@ class AnalysisWorker:
         await self.notifier.notify_change(db, event, item.title)
 
     def _mark_failed(self, db: Session, job: AnalysisJob, error: str) -> None:
+        if job.kind == "assignment_summary":
+            return
         if job.kind == "task_effort":
             analysis = db.scalar(
                 select(TaskAnalysis).where(TaskAnalysis.task_id == job.entity_id)

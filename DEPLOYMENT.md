@@ -58,6 +58,33 @@ auth-broker/.venv/bin/python -m academic_watcher_auth_broker
 
 登录弹出的官方页面时自行输入密码/MFA，不要导出 Cookie 或浏览器配置档。手动模式的自定义参数与端口见 [`auth-broker/README.md`](auth-broker/README.md)。
 
+### 可选持久加密凭据（Linux）
+
+默认 Compose 将凭据放在内存中。Linux 管理员如需在重启后保留凭据，可在完成上方快速启动后，于仓库根目录执行：
+
+```sh
+sudo env AW_KEY_FILE="$PWD/secrets/master.key" AW_VAULT_FILE="$PWD/data/credentials/vault.enc" python3 ops/prepare_credential_key.py
+```
+
+此脚本只创建一次 root 所有的 `0700` 密钥目录和 `0600` 密钥文件；如加密库仍在而密钥丢失，它会拒绝生成新密钥。请恢复原密钥，不要重置它。将以下设置加入 Git 忽略的 `.env`：
+
+```dotenv
+CREDENTIAL_PERSISTENCE_ENABLED=true
+CREDENTIAL_VAULT_PATH=/data/credentials/vault.enc
+CREDENTIAL_MASTER_KEY_FILE=/run/secrets/academic_watcher_credentials.key
+```
+
+在 Git 忽略的 `compose.encrypted.local.yml` 中加入只读密钥挂载：
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ./secrets/master.key:/run/secrets/academic_watcher_credentials.key:ro
+```
+
+以 `docker compose -f docker-compose.yml -f compose.encrypted.local.yml up -d --build` 启动。Settings → Sources 的 Credential storage 应显示 **Encrypted on server**。备份时必须同时保留原密钥和 `data/`；不要把密钥、数据库或覆盖配置提交到 Git。Azure 多用户部署由租户 provisioner 自行创建独立密钥，不使用这个单用户脚本。
+
 ### 日常维护
 
 ```powershell
@@ -66,7 +93,7 @@ docker compose logs --tail 80 backend
 docker compose down
 ```
 
-`down` 不带 `-v`；不要删除 `data/`。后端重启会清空仅保存在内存中的 PAT、浏览器会话与 AI Key，需在界面重新登录或导入。AI 与 ntfy 均为可选；启用通知服务可用 `docker compose --profile notifications up -d`，但需自行配置 `NTFY_URL` / `NTFY_TOPIC`。PrairieLearn 接入缺少已选课程的真实验收，不能据此假定所有实例可用。
+`down` 不带 `-v`；不要删除 `data/`。默认内存模式下，后端重启会清空 PAT、浏览器会话与 AI Key，需在界面重新登录或导入。AI 与 ntfy 均为可选；启用通知服务可用 `docker compose --profile notifications up -d`，但需自行配置 `NTFY_URL` / `NTFY_TOPIC`。PrairieLearn 接入缺少已选课程的真实验收，不能据此假定所有实例可用。
 
 ## English
 
@@ -128,6 +155,33 @@ auth-broker/.venv/bin/python -m academic_watcher_auth_broker
 
 Complete passwords/MFA on the official provider page; do not export cookies or browser profiles. See [`auth-broker/README.md`](auth-broker/README.md) for manual options and port configuration.
 
+### Optional persistent encrypted credentials (Linux)
+
+The default Compose setup keeps credentials in memory. On Linux, after the quick start, run this from the repository root to create a root-owned `0700` key directory and `0600` key once:
+
+```sh
+sudo env AW_KEY_FILE="$PWD/secrets/master.key" AW_VAULT_FILE="$PWD/data/credentials/vault.enc" python3 ops/prepare_credential_key.py
+```
+
+If a vault exists but its key is missing, the helper refuses to generate a replacement. Restore the original key. Add these values to the Git-ignored `.env`:
+
+```dotenv
+CREDENTIAL_PERSISTENCE_ENABLED=true
+CREDENTIAL_VAULT_PATH=/data/credentials/vault.enc
+CREDENTIAL_MASTER_KEY_FILE=/run/secrets/academic_watcher_credentials.key
+```
+
+Create a Git-ignored `compose.encrypted.local.yml` with a read-only key mount:
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ./secrets/master.key:/run/secrets/academic_watcher_credentials.key:ro
+```
+
+Start with `docker compose -f docker-compose.yml -f compose.encrypted.local.yml up -d --build`. Settings → Sources should show Credential storage as **Encrypted on server**. Back up both the original key and `data/`; never commit them. The Azure multi-user provisioner creates a separate key per tenant and does not use this single-user helper.
+
 ### Operations
 
 ```powershell
@@ -136,4 +190,4 @@ docker compose logs --tail 80 backend
 docker compose down
 ```
 
-Do not use `down -v` or delete `data/`. Backend restarts clear process-memory PATs, browser credentials, and AI keys; re-authenticate or re-import them through the UI. AI and ntfy are optional. For ntfy, run `docker compose --profile notifications up -d` and configure `NTFY_URL` / `NTFY_TOPIC`. PrairieLearn integration has not been validated with an enrolled course, so compatibility with every instance is not guaranteed.
+Do not use `down -v` or delete `data/`. In the default memory mode, backend restarts clear PATs, browser credentials, and AI keys; re-authenticate or re-import them through the UI. AI and ntfy are optional. For ntfy, run `docker compose --profile notifications up -d` and configure `NTFY_URL` / `NTFY_TOPIC`. PrairieLearn integration has not been validated with an enrolled course, so compatibility with every instance is not guaranteed.

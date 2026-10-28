@@ -56,7 +56,7 @@ async def test_task_today_and_detail_share_exact_navigation_contract():
 
 
 @pytest.mark.asyncio
-async def test_changes_prefilter_preserves_legacy_without_snapshots():
+async def test_changes_prefilter_only_keeps_reportable_history():
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with Session(engine) as db:
@@ -72,12 +72,12 @@ async def test_changes_prefilter_preserves_legacy_without_snapshots():
             structured_json={'title': 'Lecture.pdf'}, normalized_text='Lecture.pdf')
         db.add(snapshot)
         db.flush()
-        visible = ChangeEvent(source_item_id=item.id, change_type='CANVAS_FILE_UPDATED',
-            new_snapshot_id=snapshot.id, summary='Lecture changed')
+        visible = ChangeEvent(source_item_id=item.id, change_type='NEW_FILE',
+            new_snapshot_id=snapshot.id, summary='New lecture')
         hidden = ChangeEvent(source_item_id=item.id, change_type='CANVAS_FILE_METADATA_UPDATED',
             new_snapshot_id=snapshot.id, summary='Metadata churn')
-        legacy = ChangeEvent(source_item_id=item.id, change_type='CANVAS_FILE_METADATA_UPDATED',
-            summary='Legacy metadata event')
+        legacy = ChangeEvent(source_item_id=item.id, change_type='NEW_ANNOUNCEMENT',
+            summary='Legacy announcement event')
         db.add_all([visible, hidden, legacy])
         db.commit()
 

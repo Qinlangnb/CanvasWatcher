@@ -16,7 +16,7 @@ def classify_canvas_errors(errors, successful):
 
 
 def source_health_view(source):
-    details = (source.metadata_json or {}).get('resource_errors') or []
+    details = list((source.metadata_json or {}).get('resource_errors') or [])
     if not details and source.last_error:
         # Legacy records lack HTTP status: preserve that uncertainty explicitly.
         for entry in source.last_error.split(';'):
@@ -34,4 +34,14 @@ def source_health_view(source):
         message = 'Sign in again to resume source synchronization.'
     elif source.state == 'ERROR':
         message = 'Source synchronization failed. Check authentication and retry.'
+    unavailable = (source.metadata_json or {}).get('unavailable_resources') or []
+    has_unavailable = False
+    for detail in unavailable:
+        if (isinstance(detail, dict) and detail.get('resource') == 'page'
+                and detail.get('code') == 'unavailable' and detail.get('http_status') == 404
+                and detail.get('reason') in {'navigation_hidden', 'not_in_navigation'}):
+            details.append(detail)
+            has_unavailable = True
+    if message is None and has_unavailable:
+        message = 'Pages index is unavailable for this account; existing pages and files are preserved.'
     return {'health_summary': message, 'health_diagnostics': details}

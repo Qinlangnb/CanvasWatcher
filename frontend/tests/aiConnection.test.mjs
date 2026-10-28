@@ -7,7 +7,10 @@ function moduleUrl(source) {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
-const apiUrl = moduleUrl(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+const publicPathUrl = moduleUrl(readFileSync(new URL('../src/publicPath.ts', import.meta.url), 'utf8'));
+const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8')
+  .replace('"./publicPath"', JSON.stringify(publicPathUrl));
+const apiUrl = moduleUrl(apiSource);
 const source = readFileSync(new URL('../src/aiConnection.ts', import.meta.url), 'utf8').replace('"./api"', JSON.stringify(apiUrl));
 const { saveAIConnection, refreshAIConnection } = await import(moduleUrl(source));
 

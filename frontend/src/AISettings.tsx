@@ -24,6 +24,7 @@ export function AISettings() {
   }, [query.data]);
   const selected = query.data?.providers.find(item => item.id === provider);
   const loaded = provider === query.data?.provider && query.data?.credential_loaded;
+  const persistent = query.data?.credential_storage === "server_encrypted";
   const dirty = provider !== query.data?.provider || model.trim() !== query.data?.model_id || !!key.trim();
   const canCall = !!selected && (!selected.requires_key || loaded || !!key.trim());
 
@@ -82,9 +83,9 @@ export function AISettings() {
       {selected ? <p className="muted" style={{ overflowWrap: "anywhere" }}>Base URL (fixed): {selected.base_url}</p> : null}
       {selected?.requires_key ? <label>API key
         <input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)}
-          placeholder={loaded ? "Loaded in backend memory; leave blank to keep" : "Paste this provider's API key"} />
+          placeholder={loaded ? "Key loaded; leave blank to keep" : "Paste this provider's API key"} />
       </label> : selected ? <p>Local Ollama needs no API key. For this Docker deployment use “Docker host”; run Ollama on the host at port 11434 and install a model first.</p> : null}
-      <p className="muted">Keys are provider/region-specific and stay in backend memory only. Switching providers removes the old key; restarting the backend requires importing it again. Chat subscriptions and coding-plan keys may not cover this API.</p>
+      <p className="muted">{persistent ? "Keys are encrypted on this server and restored after restart, including the unchanged model's successful connection test. " : "Keys stay in backend memory only; restarting the backend requires importing and testing them again. "}Switching providers removes the old key. Keys are provider/region-specific; chat subscriptions and coding-plan keys may not cover this API.</p>
       <label>Model ID
         <input list="ai-model-options" value={model} onChange={event => setModel(event.target.value)} placeholder="Fetch models or enter an exact model ID" />
         <datalist id="ai-model-options">{models.map(value => <option key={value} value={value} />)}</datalist>

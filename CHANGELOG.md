@@ -1,5 +1,21 @@
 # Changelog / 更新记录
 
+## Unreleased — Azure multi-user preview / Azure 多用户预览
+
+### English
+
+- Added an invitation-only identity gateway with per-user backend processes, SQLite databases, encrypted credentials, file trees, and quotas. The default local Compose deployment remains single-user.
+- Brought source synchronization, assignment attachments, page availability, AI summaries, responsive Today cards, and Broker direct-HTTPS support forward from the private development branch.
+- Added generic Linux deployment templates. Domain, owner identity, credentials, database, and server-specific configuration must be supplied by each operator. Fresh multi-user first-admin bootstrapping is not automated in this preview.
+- Split the repository README into English and Chinese files.
+
+### 中文
+
+- 新增邀请制身份网关，为每位用户隔离后端进程、SQLite、加密凭据、文件树和配额；默认本地 Compose 仍为单用户。
+- 同步私有开发分支中的来源采集、作业附件、Pages 可用性、AI 概括、Today 响应式布局及 Broker 直连 HTTPS 支持。
+- 加入通用 Linux 部署模板；域名、管理员身份、凭据、数据库与服务器专属配置须由部署者提供。预览版尚未自动化全新多用户实例的首位管理员初始化。
+- 将仓库 README 拆为英文和中文两份。
+
 ## v0.7.2
 
 ### 中文

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, json } from "./api";
+import { toInternalPath, withBasePath } from "./publicPath";
 import { ActionFeedback, useAsyncAction } from "./ActionFeedback";
 import { setTaskIgnored } from "./taskActions";
-import { AIChatDrawer } from "./AIChatDrawer";
 import { FilesView, type FileType } from "./FilesView";
 import { SettingsView } from "./SettingsView";
 import { sourceStatusTone as statusTone } from "./SourceStatusBadge";
@@ -35,22 +35,48 @@ import {
 
 type Tab = "Today" | "Timeline" | "Courses" | "Changes" | "Files";
 const TABS: Tab[] = ["Today", "Timeline", "Courses", "Changes", "Files"];
+// Set only for gateway deployments (multi-user Azure), where /watcher/account exists.
+const ACCOUNT_URL = (import.meta as ImportMeta & { env?: { VITE_ACCOUNT_URL?: string } })
+  .env?.VITE_ACCOUNT_URL;
+const LazyAIChatDrawer = lazy(() =>
+  import("./AIChatDrawer").then(({ AIChatDrawer }) => ({
+    default: AIChatDrawer,
+  })),
+);
+
 const tabFromLocation = (path: string, search: string): Tab => {
   if (path.startsWith("/courses")) return "Courses";
   const value = new URLSearchParams(search).get("tab");
   return TABS.includes(value as Tab) ? (value as Tab) : "Today";
 };
 
+function ChatLoadingFallback() {
+  return (
+    <div className="drawer-backdrop" role="presentation">
+      <aside className="chat-drawer general-chat" role="status" aria-live="polite">
+        <div className="dialog-head">
+          <div>
+            <p className="eyebrow">ACADEMIC WATCHER</p>
+            <h2>AI Chat</h2>
+          </div>
+        </div>
+        <p>Loading AI Chat…</p>
+      </aside>
+    </div>
+  );
+}
+
 export default function App() {
   const query = useQueryClient();
   const notificationAction = useAsyncAction();
   const [tab, setTab] = useState<Tab>(() =>
-    tabFromLocation(location.pathname, location.search),
+    tabFromLocation(toInternalPath(location.pathname), location.search),
   );
-  const [path, setPath] = useState(location.pathname);
+  const [path, setPath] = useState(toInternalPath(location.pathname));
   const [search, setSearch] = useState(location.search);
   const [selectedChange, setSelectedChange] = useState<number | null>(null);
   const [chat, setChat] = useState(false);
+  const [hasOpenedChat, setHasOpenedChat] = useState(false);
   const [sourcePanel, setSourcePanel] = useState<"canvas" | number | null>(
     null,
   );
@@ -60,9 +86,10 @@ export default function App() {
   const [toast, setToast] = useState("");
   useEffect(() => {
     const pop = () => {
-      setPath(location.pathname);
+      const nextPath = toInternalPath(location.pathname);
+      setPath(nextPath);
       setSearch(location.search);
-      setTab(tabFromLocation(location.pathname, location.search));
+      setTab(tabFromLocation(nextPath, location.search));
     };
     addEventListener("popstate", pop);
     return () => removeEventListener("popstate", pop);
@@ -85,11 +112,13 @@ export default function App() {
     return () => removeEventListener("keydown", commitOnEnter);
   }, []);
   const navigate = (next: string, replace = false) => {
-    if (replace) history.replaceState({}, "", next);
-    else history.pushState({}, "", next);
-    setPath(location.pathname);
+    const nextPath = withBasePath(next);
+    if (replace) history.replaceState({}, "", nextPath);
+    else history.pushState({}, "", nextPath);
+    const internalPath = toInternalPath(location.pathname);
+    setPath(internalPath);
     setSearch(location.search);
-    setTab(tabFromLocation(location.pathname, location.search));
+    setTab(tabFromLocation(internalPath, location.search));
   };
   useEffect(() => {
     if (path === "/sources") navigate("/settings/sources", true);
@@ -338,7 +367,8 @@ export default function App() {
                     : canvas.data.effective_method === "browser_session"
                       ? `Session${canvas.data.credentials?.pat.state === "EXPIRED" ? " · PAT expired" : ""}`
                       : canvas.data.days_remaining == null ? "PAT · expiry unknown" : `PAT · ${canvas.data.days_remaining} days left`
-                  : "Authentication required"}
+                  : canvas.data?.effective_method && canvas.data.credentials?.[canvas.data.effective_method]?.state === "RESTORED"
+                    ? "Restored · awaiting verification" : "Authentication required"}
               </small>
             </span>
           </button>
@@ -439,6 +469,7 @@ export default function App() {
             <h1>{title}</h1>
           </div>
           <div className="actions">
+            {ACCOUNT_URL && <a className="account-link" href={ACCOUNT_URL}>Account</a>}
             <button className="primary" onClick={() => sync.mutate()}>
               {sync.isPending ? "Syncing…" : "Sync now"}
             </button>
@@ -575,17 +606,24 @@ export default function App() {
       <button
         className="chat-launcher"
         aria-label="Open AI Chat"
-        onClick={() => setChat(true)}
+        onClick={() => {
+          setHasOpenedChat(true);
+          setChat(true);
+        }}
       >
         ✦
       </button>
-      <AIChatDrawer
-        open={chat}
-        close={() => setChat(false)}
-        changed={() => query.invalidateQueries()}
-        route={`${path}${search}`}
-        courseId={courseId}
-      />
+      {hasOpenedChat ? (
+        <Suspense fallback={<ChatLoadingFallback />}>
+          <LazyAIChatDrawer
+            open={chat}
+            close={() => setChat(false)}
+            changed={() => query.invalidateQueries()}
+            route={`${path}${search}`}
+            courseId={courseId}
+          />
+        </Suspense>
+      ) : null}
       {selectedChange !== null ? (
         <ChangeDialog
           detail={detail.data}
@@ -1169,8 +1207,8 @@ function Changes({
         <div>
           <h2>Change history</h2>
           <p>
-            Academic changes only. Source health and crawler diagnostics stay in
-            Sources and logs.
+            New files, new announcements, and grade releases only. Page edits
+            and other updates are not reported here.
           </p>
         </div>
         {showBulk ? (

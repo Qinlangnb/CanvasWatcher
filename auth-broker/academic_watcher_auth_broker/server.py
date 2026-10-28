@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .browser import BrowserLogin, LoginFailure, Profiles
 from .config import Config
+from .resolve import PinnedTransport
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,11 @@ class Job:
 def create_app(config: Config | None = None, *, login=None, transport=None):
     config = config or Config.from_env()
     profiles = Profiles(config.profiles, config.backend_origin)
+
+    def gateway_transport():
+        if transport is not None:
+            return transport
+        return PinnedTransport(config.backend_origin) if config.backend_origin.startswith("https://") else None
     login = login or BrowserLogin(profiles)
     jobs: dict[str, Job] = {}
     start_lock = asyncio.Lock()
@@ -51,7 +57,7 @@ def create_app(config: Config | None = None, *, login=None, transport=None):
                 job.task.cancel()
         await asyncio.gather(*(j.task for j in jobs.values() if j.task), return_exceptions=True)
 
-    app = FastAPI(title="Academic Watcher Auth Broker", version="0.7.2", lifespan=lifespan,
+    app = FastAPI(title="Academic Watcher Auth Broker", version="0.7.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
     pna = {"allow_private_network": True} if "allow_private_network" in inspect.signature(CORSMiddleware).parameters else {}
     app.add_middleware(CORSMiddleware, allow_origins=list(config.frontend_origins),
@@ -84,16 +90,16 @@ def create_app(config: Config | None = None, *, login=None, transport=None):
     async def health():
         ready = False
         try:
-            async with httpx.AsyncClient(transport=transport, trust_env=False, timeout=1.5,
+            async with httpx.AsyncClient(transport=gateway_transport(), trust_env=False, timeout=1.5,
                                          follow_redirects=False) as client:
                 response = await client.get(config.backend_origin + "/api/health")
                 ready = response.status_code == 200 and response.json().get("status") == "ok"
         except (httpx.HTTPError, ValueError, AttributeError):
             pass
-        return {"state": "BROKER_AVAILABLE", "protocol_version": 1, "version": "0.7.2", "backend_ready": ready}
+        return {"state": "BROKER_AVAILABLE", "protocol_version": 1, "version": "0.7.0", "backend_ready": ready}
 
     async def backend(path: str, body: dict):
-        async with httpx.AsyncClient(transport=transport, trust_env=False, timeout=35,
+        async with httpx.AsyncClient(transport=gateway_transport(), trust_env=False, timeout=35,
                                      follow_redirects=False) as client:
             response = await client.post(config.backend_origin + "/api/auth/broker/" + path,
                                          json=body, headers={"X-AW-Broker": "1"})

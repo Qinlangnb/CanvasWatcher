@@ -7,7 +7,7 @@ function instant(value: string): Date {
 
 export function formatUiucDateTime(value: string | null): string {
   if (!value) return "No deadline";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: UIUC_TIME_ZONE,
@@ -15,7 +15,7 @@ export function formatUiucDateTime(value: string | null): string {
 }
 
 export function formatUiucTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
     timeZone: UIUC_TIME_ZONE,
@@ -23,14 +23,14 @@ export function formatUiucTime(value: string): string {
 }
 
 export function formatLocalDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeZone: "UTC",
   }).format(new Date(`${value}T00:00:00Z`));
 }
 
 export function formatUiucHeaderDate(): string {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "short",
     day: "numeric",

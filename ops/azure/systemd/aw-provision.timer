@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile Academic Watcher tenants every 20 seconds
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

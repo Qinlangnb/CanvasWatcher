@@ -95,6 +95,7 @@ export type PlanBlock = {
   status: string;
 };
 export type CanvasStatus = {
+  credential_storage?: "memory" | "server_encrypted";
   connection_state?: string;
   effective_method?: "oauth" | "pat" | "browser_session" | null;
   preferred_method?: "oauth" | "pat" | "browser_session";
@@ -191,7 +192,8 @@ export type ChangeDetail = {
   internal_metadata: Record<string, unknown>;
 };
 export type TodayWork = {
-  provider_facts?: { provider: string; source_item_id: number; due_at: string | null; late_due_at: string | null; submission_state: string | null; direct_assignment_url: string | null }[];
+  attachments?: { file_id: number; filename: string }[];
+  provider_facts?: { provider: string; source_item_id: number; due_at: string | null; late_due_at: string | null; submission_state: string | null; description_summary?: string | null; description_summary_status?: "unavailable" | "needs_connection" | "failed" | "pending" | "ready" }[];
   state_revision?: number;
   local_completed?: boolean;
   submission_state?: string | null;
@@ -313,6 +315,7 @@ export type SourceConnection = {
   state: string;
 };
 export type AIProbeSettings = {
+  credential_storage?: "memory" | "server_encrypted";
   provider: string;
   providers: { id: string; label: string; base_url: string; requires_key: boolean }[];
   needs_provider_selection: boolean;

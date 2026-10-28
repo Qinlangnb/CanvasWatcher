@@ -1,0 +1,9 @@
+[Unit]
+Description=Academic Watcher tenant provisioner (root, reconciles identity DB)
+After=aw-gateway.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/academic-watcher/public.env
+ExecStart=/usr/bin/python3 /opt/academic-watcher/ops/aw_provision.py reconcile
+TimeoutStartSec=600

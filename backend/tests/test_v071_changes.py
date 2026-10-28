@@ -13,7 +13,7 @@ from app.services.notifier import NtfyNotifier
 from app.services.today import TodayEngine
 
 
-def candidate(db, *, field="due_at", old="2026-10-02", new="2026-10-01", kind="DEADLINE_CHANGED"):
+def candidate(db, *, field="score", old=None, new=0, kind="CANVAS_GRADE_RELEASED"):
     _, item = add_course(db, "TEST")
     snapshots = [SourceSnapshot(source_item_id=item.id, content_hash=str(i),
         structured_json={field: value}, normalized_text="same academic text") for i, value in enumerate((old, new))]
@@ -221,7 +221,7 @@ def test_metadata_only_diff_is_dropped_and_audited():
         event = candidate(db, field="preview_url", kind="CONTENT_UPDATED")
         assert prefilter(db, event)[0] == "DROP"
         assert enqueue_change_analysis(db, event) is None
-        assert db.scalar(select(ChangeAnalysis)).analysis_json["stage1_reason"] == "empty_or_metadata_only_diff"
+        assert db.scalar(select(ChangeAnalysis)).analysis_json["stage1_reason"] == "system_or_nonsemantic"
         assert db.scalar(select(AnalysisJob)) is None
 
 

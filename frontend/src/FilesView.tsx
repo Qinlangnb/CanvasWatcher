@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { ActionFeedback, useAsyncAction } from "./ActionFeedback";
+import { apiFetch } from "./api";
 import type { Course, FileRecord } from "./types";
 import { formatUiucDateTime } from "./timezone";
+import { withBasePath } from "./publicPath";
 
 export const FILE_TYPES = [
   "all",
@@ -61,7 +63,7 @@ export function FilesView({
     else setLocalType(next);
   }
   async function move(file: FileRecord, next: string) {
-    const response = await fetch(`/api/files/${file.id}/classification`, {
+    const response = await apiFetch(`/api/files/${file.id}/classification`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: next }),
@@ -150,7 +152,7 @@ export function FilesView({
                 role="menu"
                 onClick={(event) => event.stopPropagation()}
               >
-                <a role="menuitem" href={`/api/files/${file.id}/content`}>
+                <a role="menuitem" href={withBasePath(`/api/files/${file.id}/content`)}>
                   Download
                 </a>
                 <span>Move to…</span>

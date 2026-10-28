@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 from academic_watcher_auth_broker.browser import Profiles, failure_category
-from academic_watcher_auth_broker.config import Config, loopback_origin, provider_origin
+from academic_watcher_auth_broker.config import Config, backend_base, loopback_origin, provider_origin
 from academic_watcher_auth_broker.server import create_app
 
 from app.auth.broker_challenges import ChallengeError, ChallengeStore
@@ -255,3 +255,89 @@ async def test_login_failure_logs_stage_without_secret_exception_text(tmp_path, 
     assert "fixture-login-secret" not in caplog.text
     assert "fixture-exchange-secret" not in caplog.text
     assert value["one_time_token"] not in caplog.text
+
+
+@pytest.mark.parametrize("url", ["https://watcher.example.com/watcher", "https://watcher.example.com/watcher/", "http://127.0.0.1:8000"])
+def test_backend_base_accepts_loopback_or_https_gateway(url):
+    assert backend_base(url) == url.rstrip("/")
+
+
+@pytest.mark.parametrize("url", ["http://watcher.example.com/watcher", "https://user@watcher.example.com/watcher",
+                                  "https://watcher.example.com/watcher?x=1", "https://watcher.example.com/watcher#x",
+                                  "https://watcher.example.com/../watcher", "https://watcher.example.com/a b", "https:///watcher"])
+def test_backend_base_rejects_other_urls(url):
+    with pytest.raises(ValueError):
+        backend_base(url)
+
+
+def test_broker_reaches_gateway_under_its_base_path(tmp_path):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"status": "ok"})
+
+    config = Config(backend_origin="https://watcher.example.com/watcher", frontend_origins=("https://watcher.example.com",),
+                    profiles=tmp_path)
+    app = create_app(config, transport=httpx.MockTransport(handler))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765") as client:
+            response = await client.get("/health", headers={"Origin": "https://watcher.example.com"})
+            assert response.json()["backend_ready"] is True
+            denied = await client.get("/health", headers={"Origin": "https://evil.example"})
+            assert denied.status_code == 403
+
+    asyncio.run(run())
+    assert seen == ["https://watcher.example.com/watcher/api/health"]
+
+
+def test_remote_launcher_mode_runs_only_the_broker(tmp_path, monkeypatch):
+    from academic_watcher_auth_broker import launch
+    python = tmp_path / "python.exe"
+    python.write_text("")
+    started = []
+
+    class Child:
+        def __init__(self, args, env=None):
+            started.append((args, env["AW_BROKER_BACKEND"], env["AW_BROKER_ORIGINS"]))
+
+        def poll(self):
+            return None
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(launch, "port_free", lambda port: True)
+    config = {"python": str(python), "backend": "https://watcher.example.com/watcher/", "origin": "https://watcher.example.com"}
+    down = launch.RemoteSupervisor(config, child=Child, ready=lambda backend: False)
+    assert down.tick(0) == "CALLBACK_UNAVAILABLE" and not started
+    supervisor = launch.supervisor_for(config)
+    supervisor.child, supervisor.ready = Child, lambda backend: backend == "https://watcher.example.com/watcher"
+    assert supervisor.tick(0) == "STARTING"
+    assert supervisor.tick(1) == "RUNNING"
+    assert started == [([str(python), "-m", "academic_watcher_auth_broker"], "https://watcher.example.com/watcher", "https://watcher.example.com")]
+    for bad in ({**config, "backend": "http://watcher.example.com/watcher"}, {**config, "origin": "http://watcher.example.com"},
+                {**config, "tunnel": "x"}):
+        with pytest.raises(ValueError):
+            launch.supervisor_for(bad)
+
+
+def test_gateway_host_is_pinned_to_doh_address_with_sni_kept():
+    from academic_watcher_auth_broker import resolve
+    request = httpx.Request("GET", "https://watcher.example.com/watcher/api/health")
+    assert resolve._targets(request, "watcher.example.com")
+    assert not resolve._targets(httpx.Request("GET", "https://evil.example/x"), "watcher.example.com")
+    assert not resolve._targets(httpx.Request("GET", "http://watcher.example.com/x"), "watcher.example.com")
+    resolve._pin(request, "watcher.example.com", "8.8.8.8")
+    assert str(request.url) == "https://8.8.8.8/watcher/api/health"
+    # Host header and TLS SNI/certificate check stay on the gateway name.
+    assert request.headers["host"] == "watcher.example.com" and request.extensions["sni_hostname"] == "watcher.example.com"
+
+
+def test_doh_answers_must_be_public_ipv4(monkeypatch):
+    from academic_watcher_auth_broker import resolve
+    answers = iter([{"Answer": [{"type": 1, "data": "10.0.0.4"}]}, {"Answer": [{"type": 5, "data": "x."}, {"type": 1, "data": "8.8.8.8"}]}])
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=next(answers)))
+    monkeypatch.setattr(resolve, "_cache", {})
+    assert resolve.doh_address("watcher.example.com", transport=transport) == "8.8.8.8"

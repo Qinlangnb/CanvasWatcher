@@ -1,6 +1,11 @@
 """Bounded normalized candidate context; Stage 1 never authorizes notifications."""
 from app.db import SourceItem
-from app.services.change_policy import event_snapshots, is_system_change_type, is_user_facing_event
+from app.services.change_policy import (
+    event_snapshots,
+    grade_is_released,
+    is_system_change_type,
+    is_user_facing_event,
+)
 
 ACADEMIC_FIELDS = frozenset({"title", "description", "body", "text", "due_at", "due_date_local",
     "points_possible", "published", "locked", "submission", "grade", "score", "content_hash",
@@ -12,6 +17,12 @@ def normalized_candidate(db, event):
     old, new = event_snapshots(db, event)
     before = old.structured_json if old else {}
     after = new.structured_json if new else {}
+    if "GRADE" in event.change_type.upper():
+        def grade_values(data):
+            grade = data.get("provider_facts") or data.get("submission") or data
+            return {**data, "score": grade.get("score"), "grade": grade.get("grade"),
+                    "grade_published": grade_is_released(data)}
+        before, after = grade_values(before), grade_values(after)
     fields = sorted(key for key in ACADEMIC_FIELDS if before.get(key) != after.get(key))
     # Only normalized academic scalar values cross the provider boundary. Nested
     # provider objects can contain auth/transport metadata and are not dumped.

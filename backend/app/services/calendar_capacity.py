@@ -182,6 +182,10 @@ def _availability_for_day(db: Session, day: date, timezone: ZoneInfo) -> list[In
         values = [
             {"start": row.start_local_time, "end": row.end_local_time} for row in rules
         ]
+    return _availability_intervals(values, day, timezone)
+
+
+def _availability_intervals(values: list[dict], day: date, timezone: ZoneInfo) -> list[Interval]:
     return [
         Interval(
             datetime.combine(day, _clock(row["start"]), timezone).astimezone(UTC),
@@ -201,44 +205,79 @@ def free_capacity_between(
     minimum, maximum = as_utc(time_min), as_utc(time_max)
     if maximum <= minimum:
         return 0, "calendar"
-    timezone = ZoneInfo(timezone_name)
-    provider = ManualCalendarProvider(db)
-    events = provider.list_events(minimum, maximum)
-    instances = [row for event in events for row in expand_event(event, minimum, maximum)]
-    commutes = {
-        row.id: max(0, row.commute_minutes or 0)
-        for row in db.scalars(select(Course))
-    }
-    # Re-expand with event metadata so course-specific commute applies.
-    busy: list[Interval] = []
-    for event in events:
-        if (event.transparency or "opaque").lower() == "transparent":
-            continue
-        for item in expand_event(event, minimum, maximum):
-            minutes = commutes.get(event.course_id or -1, 0) if item.is_class else 0
-            busy.append(
-                Interval(
-                    item.start - timedelta(minutes=minutes),
-                    item.end + timedelta(minutes=minutes),
-                    item.is_class,
-                )
-            )
-    del instances
-    day = minimum.astimezone(timezone).date()
-    last = maximum.astimezone(timezone).date()
-    total = 0.0
-    configured = False
-    while day <= last:
-        availability = _availability_for_day(db, day, timezone)
-        if availability is not None:
-            configured = True
-            clipped = [
-                Interval(max(slot.start, minimum), min(slot.end, maximum))
-                for slot in availability
-                if min(slot.end, maximum) > max(slot.start, minimum)
-            ]
-            free = subtract_intervals(clipped, busy)
-            total += sum((row.end - row.start).total_seconds() / 60 for row in free)
-        day += timedelta(days=1)
-    source = "calendar" if events and configured else "availability" if configured else "fallback"
-    return (max(0, round(total)), source) if configured else (None, source)
+    return CapacityReader(db, minimum, maximum, timezone_name).between(minimum, maximum)
+
+
+class CapacityReader:
+    """A single request's calendar inputs, shared across its deadline windows.
+
+    Keep expansion/clipping specific to each window: selecting an ordinary event
+    outside that window and applying its commute would change existing capacity.
+    No object is retained across requests or a write/commit.
+    """
+
+    def __init__(self, db: Session, time_min: datetime, time_max: datetime,
+                 timezone_name: str = UIUC_TIMEZONE):
+        self.minimum, self.maximum = as_utc(time_min), as_utc(time_max)
+        self.timezone = ZoneInfo(timezone_name)
+        self.events = ManualCalendarProvider(db).list_events(self.minimum, self.maximum)
+        self.commutes = {row.id: max(0, row.commute_minutes or 0)
+                         for row in db.execute(select(Course.id, Course.commute_minutes))}
+        self.rules = list(db.scalars(select(StudyAvailabilityRule)))
+        self.overrides = {row.date: row.available_intervals or [] for row in db.scalars(
+            select(StudyAvailabilityOverride).where(
+                StudyAvailabilityOverride.date >= self.minimum.astimezone(self.timezone).date(),
+                StudyAvailabilityOverride.date <= self.maximum.astimezone(self.timezone).date(),
+            ))}
+        self._days: dict[date, list[Interval] | None] = {}
+        self._windows: dict[tuple[datetime, datetime], tuple[int | None, str]] = {}
+
+    def _day(self, day: date) -> list[Interval] | None:
+        if day not in self._days:
+            if day in self.overrides:
+                values = self.overrides[day]
+            else:
+                values = [{"start": row.start_local_time, "end": row.end_local_time}
+                          for row in self.rules if row.enabled and row.weekday == day.weekday()]
+                if not values and not self.rules:
+                    self._days[day] = None
+                    return None
+            self._days[day] = _availability_intervals(values, day, self.timezone)
+        return self._days[day]
+
+    def between(self, time_min: datetime, time_max: datetime) -> tuple[int | None, str]:
+        minimum, maximum = as_utc(time_min), as_utc(time_max)
+        if maximum <= minimum:
+            return 0, "calendar"
+        if minimum < self.minimum or maximum > self.maximum:
+            raise ValueError("Capacity window exceeds this request's loaded range")
+        key = (minimum, maximum)
+        if key in self._windows:
+            return self._windows[key]
+        events = [event for event in self.events if event.recurrence_rule is not None or (
+            as_utc(event.start_at) < maximum and as_utc(event.end_at) > minimum)]
+        busy: list[Interval] = []
+        for event in events:
+            if (event.transparency or "opaque").lower() == "transparent":
+                continue
+            for item in expand_event(event, minimum, maximum):
+                minutes = self.commutes.get(event.course_id or -1, 0) if item.is_class else 0
+                busy.append(Interval(item.start - timedelta(minutes=minutes),
+                                     item.end + timedelta(minutes=minutes), item.is_class))
+        day = minimum.astimezone(self.timezone).date()
+        last = maximum.astimezone(self.timezone).date()
+        total, configured = 0.0, False
+        while day <= last:
+            availability = self._day(day)
+            if availability is not None:
+                configured = True
+                clipped = [Interval(max(slot.start, minimum), min(slot.end, maximum))
+                           for slot in availability
+                           if min(slot.end, maximum) > max(slot.start, minimum)]
+                total += sum((row.end - row.start).total_seconds() / 60
+                             for row in subtract_intervals(clipped, busy))
+            day += timedelta(days=1)
+        source = "calendar" if events and configured else "availability" if configured else "fallback"
+        result = (max(0, round(total)), source) if configured else (None, source)
+        self._windows[key] = result
+        return result

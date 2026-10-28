@@ -450,6 +450,8 @@ def reestimate_task(task_id: int, db: Session = Depends(get_db)):
 
 def _change_semantics(change_type: str) -> tuple[str, str | None]:
     value = change_type.upper()
+    if "GRADE" in value:
+        return "grade", "grade / score"
     if "DEADLINE" in value:
         return "deadline", "due_at"
     if "FILE" in value:
@@ -471,6 +473,12 @@ def _change_semantics(change_type: str) -> tuple[str, str | None]:
 
 def _event_label(change_type: str) -> str:
     value = change_type.upper()
+    if "GRADE" in value:
+        return "Grade released"
+    if value in {"NEW_FILE", "FILE_ADDED", "CANVAS_FILE_ADDED"}:
+        return "New file"
+    if value in {"NEW_ANNOUNCEMENT", "ANNOUNCEMENT_CREATED", "CANVAS_ANNOUNCEMENT_CREATED"}:
+        return "New announcement"
     if "ANNOUNCEMENT" in value:
         if "CREATED" in value:
             return "New source item detected"
@@ -549,7 +557,9 @@ def _change_out(db: Session, value: ChangeEvent) -> dict:
     change_type = value.change_type.upper()
     candidate = value.ai_summary if not _generic_summary(value.ai_summary) else None
 
-    if "ANNOUNCEMENT" in change_type:
+    if "GRADE" in change_type:
+        candidate = f"Grade released: {title or 'Assignment'}"
+    elif "ANNOUNCEMENT" in change_type:
         sentence = _first_sentence(new_snapshot.normalized_text if new_snapshot else None)
         if title and sentence and sentence.lower() not in title.lower() and title.lower() not in sentence.lower():
             candidate = f"{title} — {sentence}"
@@ -568,7 +578,7 @@ def _change_out(db: Session, value: ChangeEvent) -> dict:
         else:
             candidate = candidate or f"{title or 'Assignment'} updated"
     elif "FILE" in change_type and title:
-        candidate = candidate or f"{title} content updated"
+        candidate = candidate or f"New file: {title}"
     else:
         candidate = candidate or title
 
@@ -595,12 +605,8 @@ def _change_out(db: Session, value: ChangeEvent) -> dict:
 
 
 def _visible_change_prefilter():
-    # Snapshot-bearing metadata churn is hidden by is_user_facing_event.
-    # Preserve legacy/synthetic events without snapshots, which that policy
-    # intentionally keeps visible even if their type contains FILE_METADATA.
-    return ~ChangeEvent.change_type.ilike("%FILE_METADATA%") | (
-        ChangeEvent.old_snapshot_id.is_(None) & ChangeEvent.new_snapshot_id.is_(None)
-    )
+    from app.services.change_policy import reportable_change_filter
+    return reportable_change_filter()
 
 
 @router.get("/changes/unread-count")

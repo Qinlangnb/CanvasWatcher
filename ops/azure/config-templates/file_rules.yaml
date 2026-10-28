@@ -1,0 +1,9 @@
+rules:
+  - match: {regex: "(?i)lecture|lec[0-9]+|slides"}
+    category: lecture_notes
+  - match: {regex: "(?i)optional|supplement|reading"}
+    category: optional_reading
+  - match: {regex: "(?i)hw|homework|problem.?set"}
+    category: assignments
+  - match: {regex: "(?i)syllabus"}
+    category: syllabus

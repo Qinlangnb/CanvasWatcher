@@ -10,7 +10,9 @@ function compile(file, dependencies = {}) {
   for (const [name, url] of Object.entries(dependencies)) code = code.replaceAll(JSON.stringify(name), JSON.stringify(url));
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
-const { setTaskIgnored } = await import(compile('../src/taskActions.ts', { './api': compile('../src/api.ts') }));
+const publicPathUrl = compile('../src/publicPath.ts');
+const apiUrl = compile('../src/api.ts', { './publicPath': publicPathUrl });
+const { setTaskIgnored } = await import(compile('../src/taskActions.ts', { './api': apiUrl }));
 test('ignore and undo use the backend POST contracts and return saved state', async () => {
   const previous = globalThis.fetch;
   const calls = [];

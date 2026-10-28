@@ -31,6 +31,19 @@ test("valid credentials use success tone, missing is not a failure", () => {
   for (const state of ["INVALID", "EXPIRED", "FAILED"]) assert.equal(sourceStatusTone(state), "danger");
 });
 
+test("restored credentials are not represented as a fresh successful probe", () => {
+  assert.equal(sourceStatusTone("RESTORED"), "warning");
+});
+
+test("environment removal copy distinguishes durable server mode", () => {
+  const status = { ...props.status, credential_storage: "server_encrypted",
+    credentials: { ...props.status.credentials, pat: { ...props.status.credentials.pat, origin: "environment" } } };
+  const html = renderToStaticMarkup(createElement(CanvasCredentialSlots, { ...props, status }));
+  assert.match(html, /disables this PAT across restarts/);
+  const memory = renderToStaticMarkup(createElement(CanvasCredentialSlots, { ...props, status: { ...status, credential_storage: "memory" } }));
+  assert.match(memory, /disables this PAT until restart/);
+});
+
 test("sidebar uses the same status tone helper as credential badges", () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   assert.match(app, /import \{ sourceStatusTone as statusTone \} from "\.\/SourceStatusBadge"/);

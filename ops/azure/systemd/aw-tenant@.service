@@ -1,0 +1,67 @@
+[Unit]
+Description=Academic Watcher tenant instance %i (private UDS, gateway-only)
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/academic-watcher/users/t%i
+# A partially imported slot must not boot by any path (provisioner, restart, manual start).
+ConditionPathExists=!/etc/academic-watcher/tenants/t%i/import-incomplete
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=aw-t%i
+Group=aw-t%i
+WorkingDirectory=/opt/academic-watcher/backend
+EnvironmentFile=/etc/academic-watcher/tenants/t%i/tenant.env
+Environment=CREDENTIAL_MASTER_KEY_FILE=%d/master.key
+Environment=INTERNAL_GATEWAY_TOKEN_FILE=%d/gateway.token
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/academic-watcher/ms-playwright
+Environment=HOME=/tmp
+Environment=PYTHONDONTWRITEBYTECODE=1
+LoadCredential=master.key:/etc/academic-watcher/tenants/t%i/master.key
+LoadCredential=gateway.token:/etc/academic-watcher/tenant-tokens/tenant-%i.token
+BindPaths=/var/lib/academic-watcher/users/t%i/data:/data
+BindReadOnlyPaths=/var/lib/academic-watcher/users/t%i/config:/config
+BindPaths=/var/lib/academic-watcher/users/t%i/exports:/course_exports
+# Socket directory: tenant UID, gateway group, 0750. Other tenants cannot traverse it.
+# (RuntimeDirectory= would re-chown it to the tenant group before every exec.)
+# The parent comes from tmpfiles (root 0755), so it is the namespace's writable path;
+# file permissions still stop a tenant from creating anything outside its own directory.
+ExecStartPre=+/usr/bin/install -d -o aw-t%i -g aw-gateway -m 0750 /run/academic-watcher/t%i
+ExecStartPre=/opt/academic-watcher/venv/bin/alembic upgrade head
+ExecStart=/opt/academic-watcher/venv/bin/uvicorn app.main:app --uds /run/academic-watcher/t%i/api.sock --workers 1 --no-access-log
+ExecStopPost=+/bin/rm -rf /run/academic-watcher/t%i
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+MemoryHigh=900M
+MemoryMax=1300M
+TasksMax=512
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run/academic-watcher
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Outbound guard (SSRF, incl. DNS rebinding): user-configured source URLs may only reach the
+# public internet. Blocks loopback services, the private network, cloud metadata endpoint
+# (169.254.169.254) and WireServer; the local resolver stub stays reachable. Allow wins over Deny.
+IPAddressAllow=127.0.0.53/32
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 168.63.129.16/32 fc00::/7
+InaccessiblePaths=-/etc/academic-watcher -/var/lib/academic-watcher-gateway -/var/lib/academic-watcher/images
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

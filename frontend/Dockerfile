@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG VITE_PUBLIC_BASE=/
+ENV VITE_PUBLIC_BASE=${VITE_PUBLIC_BASE}
 COPY package*.json ./
 RUN npm install
 COPY . .

@@ -1,5 +1,6 @@
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import ChangeAnalysis, ChangeEvent, SourceSnapshot
@@ -12,6 +13,44 @@ SYSTEM_MARKERS = (
     "FETCH_STATUS",
     "SOURCE_HEALTH",
 )
+
+# One policy for new observations, historical Changes, unread counts and banners.
+REPORTABLE_CHANGE_TYPES = frozenset({
+    "NEW_FILE", "FILE_ADDED", "CANVAS_FILE_ADDED",
+    "NEW_ANNOUNCEMENT", "ANNOUNCEMENT_CREATED", "CANVAS_ANNOUNCEMENT_CREATED",
+    "GRADE_RELEASED", "CANVAS_GRADE_RELEASED", "GRADESCOPE_GRADE_RELEASED",
+    "PRAIRIELEARN_GRADE_RELEASED",
+})
+
+
+def grade_is_released(data: dict | None) -> bool:
+    if not data:
+        return False
+    facts = data.get("provider_facts")
+    grade = facts if isinstance(facts, dict) else data.get("submission", data)
+    if not isinstance(grade, dict):
+        return False
+    if grade.get("grade_published") is False or grade.get("grades_hidden") is True:
+        return False
+    if not facts and "posted_at" in grade and not grade.get("posted_at"):
+        return False
+    # Zero is a real released score; max_score/points_possible alone is not.
+    return grade.get("grade_published") is True or any(
+        grade.get(key) is not None and str(grade[key]).strip() not in {"", "unknown"}
+        for key in ("score", "grade")
+    )
+
+
+def is_grade_release(old: dict | None, new: dict | None) -> bool:
+    return not grade_is_released(old) and grade_is_released(new)
+
+
+def is_reportable_change_type(change_type: str) -> bool:
+    return change_type.strip().upper() in REPORTABLE_CHANGE_TYPES
+
+
+def reportable_change_filter():
+    return func.upper(ChangeEvent.change_type).in_(REPORTABLE_CHANGE_TYPES) | ChangeEvent.change_type.ilike("%_ASSIGNMENT_GRADE_CHANGED")
 
 GENERIC_DISCOVERY_TYPES = {
     "CREATED",
@@ -115,6 +154,8 @@ def should_emit_change(
         return False
     if is_system_change_type(change_type):
         return False
+    if is_reportable_change_type(change_type):
+        return True
     if is_semantic_creation(change_type) or is_semantic_removal(change_type):
         return True
     if is_generic_discovery(change_type) or is_generic_removal(change_type):
@@ -133,11 +174,16 @@ def event_snapshots(
 
 
 def is_user_facing_event(db: Session, event: ChangeEvent) -> bool:
+    if not is_reportable_change_type(event.change_type):
+        # Old provider grade events may represent a first release or just a
+        # correction. Only a proven first release remains visible.
+        if not event.change_type.upper().endswith("_ASSIGNMENT_GRADE_CHANGED"):
+            return False
+        old, new = event_snapshots(db, event)
+        return is_grade_release(old.structured_json if old else None,
+                                new.structured_json if new else None)
     if event.old_snapshot_id is None and event.new_snapshot_id is None:
-        # Preserve legacy/synthetic records that predate snapshot links. New
-        # synchronization events always carry normalized snapshots and therefore
-        # still receive the V0.5.4 hidden/null filtering below.
-        return not is_system_change_type(event.change_type)
+        return True
     old, new = event_snapshots(db, event)
     return should_emit_change(
         event.change_type,

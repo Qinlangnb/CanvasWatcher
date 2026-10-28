@@ -1,7 +1,7 @@
 import re
 from collections import deque
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import structlog
 from bs4 import BeautifulSoup
@@ -44,6 +44,7 @@ class WebsiteAdapter:
         public_pages: list[str] | None = None,
         auth_rules: list[dict] | None = None,
         discovery: dict | None = None,
+        discovery_path_limit: int = 100,
         download: dict | None = None,
         timezone: str = "America/Chicago",
         term_calendar: dict | None = None,
@@ -73,8 +74,13 @@ class WebsiteAdapter:
         ]
         discovery = discovery or {}
         self.same_origin_only = discovery.get("same_origin_only", True)
-        self.allowed_path_prefixes = discovery.get("allowed_path_prefixes", [])
-        self.max_depth = max(0, min(int(discovery.get("max_depth", 1)), 5))
+        seed_path = urlsplit(self.url).path
+        course_root = seed_path.rsplit("/", 1)[0] if Path(seed_path).suffix else seed_path
+        self.allowed_path_prefixes = discovery.get("allowed_path_prefixes", [course_root or "/"])
+        self.max_depth = max(0, min(int(discovery.get("max_depth", 2)), 5))
+        self.path_limit = max(1, min(int(discovery_path_limit), 10_000))
+        self.retry_urls: list[str] = []
+        self.truncated = False
         self.download_enabled = (download or {}).get("enabled", True)
         self.timezone = timezone
         self.term_calendar = term_calendar or {}
@@ -95,12 +101,18 @@ class WebsiteAdapter:
     def _allowed(self, url: str) -> bool:
         target = urlsplit(url)
         base = urlsplit(self.url)
+        if target.scheme not in {"http", "https"} or target.username or target.password:
+            return False
+        path = unquote(target.path)
+        if "\\" in path or any(part in {".", ".."} for part in path.split("/")):
+            return False
         if self.same_origin_only and (
             target.scheme.lower(), target.netloc.lower()
         ) != (base.scheme.lower(), base.netloc.lower()):
             return False
         return not self.allowed_path_prefixes or any(
-            target.path.startswith(prefix) for prefix in self.allowed_path_prefixes
+            path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/")
+            for prefix in self.allowed_path_prefixes
         )
 
     def _included(self, label: str, url: str) -> bool:
@@ -188,12 +200,20 @@ class WebsiteAdapter:
             (canonicalize_url(seed, self.url), 0, Path(seed).name or self.name)
             for seed in seeds
         )
+        # Pending resources are explicit seeds, not children of the public
+        # landing page. Normal same-origin/path and credential scopes still apply.
+        queue.extend((canonicalize_url(url, self.url), 0, Path(urlsplit(url).path).name)
+                     for url in self.retry_urls if self._included("", url))
+        self.truncated = False
         seen: set[str] = set()
         items: list[RawSourceItem] = []
         while queue:
             url, depth, title = queue.popleft()
             if url in seen or not self._allowed(url):
                 continue
+            if len(seen) >= self.path_limit:
+                self.truncated = True
+                break
             seen.add(url)
             result = await self._fetch(url)
             rule = self.auth_rule_for(url)
@@ -230,6 +250,13 @@ class WebsiteAdapter:
                 )
                 continue
             soup = BeautifulSoup(result.content, "lxml")
+            # Resolve relative links against the final redirect destination,
+            # e.g. /fa2026 -> /fa2026/, not the original slashless seed.
+            page_url = canonicalize_url(result.url, url)
+            if not self._allowed(page_url):
+                items.append(self._pending_item(url, title,
+                    FetchResult(status=FetchStatus.ERROR, url=url, error="discovery_scope_rejected"), rule))
+                continue
             page_title = (
                 normalize_text(soup.title.get_text(" ")) if soup.title else title
             )
@@ -314,7 +341,7 @@ class WebsiteAdapter:
                     href = node.get("href")
                     if not href:
                         continue
-                    linked_url = canonicalize_url(href, url)
+                    linked_url = canonicalize_url(href, page_url)
                     label = normalize_text(node.get_text(" "))
                     if self._allowed(linked_url) and self._included(label, linked_url):
                         queue.append(

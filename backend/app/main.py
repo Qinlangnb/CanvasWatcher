@@ -11,6 +11,9 @@ from app.api.canvas_oauth import router as canvas_oauth_router
 from app.api.change_filters import router as change_filters_router
 from app.api.provider_sources import router as provider_sources_router
 from app.api.routes import router
+from app.auth.internal_gateway import InternalGatewayAuth, load_internal_token
+from app.auth.persistence import restore_credentials
+from app.auth.vault import VaultError
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.logging import configure_logging
@@ -26,6 +29,7 @@ configure_logging(settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    restore_credentials(settings)
     init_db()
     with SessionLocal() as db:
         auth = AuthService(settings)
@@ -46,6 +50,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Academic Watcher", version="0.7.2", lifespan=lifespan)
 
 
+@app.exception_handler(VaultError)
+async def vault_unavailable(request: Request, error: VaultError):
+    return JSONResponse(status_code=503, content={'detail': str(error)})
+
+
+@app.get('/api/settings/credential-storage')
+def credential_storage():
+    return {'mode': 'server_encrypted' if settings.credential_persistence_enabled else 'memory'}
+
+
 @app.exception_handler(RequestValidationError)
 async def safe_ai_validation_error(request: Request, error: RequestValidationError):
     if request.url.path.startswith(("/api/auth/broker", "/api/auth/canvas/oauth", "/api/provider-sources")):
@@ -56,6 +70,11 @@ async def safe_ai_validation_error(request: Request, error: RequestValidationErr
 
 
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+if settings.internal_gateway_auth_required:
+    app.add_middleware(
+        InternalGatewayAuth,
+        token=load_internal_token(settings.internal_gateway_token_file),
+    )
 app.include_router(router)
 app.include_router(broker_router)
 app.include_router(canvas_oauth_router)

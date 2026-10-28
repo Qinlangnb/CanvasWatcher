@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, json } from "./api";
+import { withBasePath } from "./publicPath";
 import { useDrawerFocus } from "./useDrawerFocus";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { chatErrorMessage, parseChatResponse } from "./chatResponse";
@@ -359,7 +360,7 @@ function ToolResult({ value }: { value: unknown }) {
       </p>
       {route ? (
         <a
-          href={route}
+          href={withBasePath(route)}
           target={route.startsWith("/api/files/") ? "_blank" : undefined}
           rel="noreferrer"
         >

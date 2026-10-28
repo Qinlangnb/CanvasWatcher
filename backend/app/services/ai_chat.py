@@ -551,8 +551,8 @@ def _commute(db: Session, args: CourseArgs, _settings: Settings) -> dict:
     return {"course_id": course.id, "course": _course_label(course), "minutes": course.commute_minutes}
 
 
-def _today(db: Session, _args: BaseModel, _settings: Settings) -> dict:
-    result = TodayEngine().build(db)
+def _today(db: Session, _args: BaseModel, settings: Settings) -> dict:
+    result = TodayEngine(settings.daily_study_capacity_minutes).build(db)
     # Scoring uses a private cutoff, not a source-authored deadline time.
     for section in ("work", "completed"):
         for row in result.get(section, []):

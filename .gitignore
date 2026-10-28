@@ -12,10 +12,20 @@ logs/
 *.sqlite3
 *.pem
 *.key
+*.pass
+*.dpapi
+*.enc
+*.tar
+*.tar.gz
+*.tar.enc
 *.p12
 *.pfx
 *storage_state*.json
 *cookies*.json
+private/
+secrets/
+ops/azure/public.env
+compose.encrypted.local.yml
 
 # Per-installation configuration
 config/courses.runtime.yaml
@@ -40,13 +50,9 @@ coverage/
 
 # Local collaboration/review artifacts
 .agent-collab/
-.agent-changed-files.json
-.agent-current-spec.md
-.agent-workspace-readme.md
-.agent-baseline-context.json
-.agent-previous-findings.json
-.agent-review-context.md
+.agent-*
 RELEASE_SPEC_*.md
+RELEASE_0.7.*.md
 # User-owned launcher configuration/profiles must never enter the checkout.
 **/BrokerLauncher/
 **/profiles/

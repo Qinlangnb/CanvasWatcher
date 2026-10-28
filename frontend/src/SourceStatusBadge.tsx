@@ -2,7 +2,7 @@ export function sourceStatusTone(state:string){
  const value=state.toUpperCase().replaceAll("_"," ");
  if(value==="ACTIVE"||value==="HEALTHY"||value==="VALID")return"active";
  if(value==="READ ONLY"||value==="COMING SOON")return"neutral";
- if(value==="DEGRADED")return"warning";
+ if(value==="DEGRADED"||value==="RESTORED")return"warning";
  if(value==="AUTH REQUIRED"||value==="READY"||value==="PENDING RECONCILIATION"||value==="MISSING"||value==="DISABLED"||value==="VERIFYING")return"warning";
  return"danger";
 }

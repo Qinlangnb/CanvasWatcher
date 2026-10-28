@@ -1,0 +1,15 @@
+# Example Caddy site. Replace watcher.example.com with your own domain.
+# If using Cloudflare, prepend Caddyfile.cloudflare-global before site blocks.
+# Academic Watcher: only /watcher is served; the gateway listens on loopback only.
+watcher.example.com {
+	encode gzip
+	handle /watcher* {
+		reverse_proxy 127.0.0.1:18780 {
+			# {client_ip} = CF-Connecting-IP from a Cloudflare peer (global trusted_proxies), else the peer.
+			header_up X-Real-IP {client_ip}
+		}
+	}
+	handle {
+		redir /watcher/ 302
+	}
+}

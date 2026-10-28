@@ -1,4 +1,8 @@
 import hashlib
+import math
+import secrets
+import time
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from threading import Lock, RLock
 from time import monotonic
@@ -11,10 +15,11 @@ from app.auth.models import (
     CanvasOAuthCredential,
     NtlmCredential,
 )
+from app.auth.vault import VaultError, valid_cookies, valid_text
 
 
 class CredentialStore:
-    """Process-memory-only credentials. This class never serializes secrets."""
+    """Memory store with optional server-encrypted durable publication."""
 
     def __init__(self) -> None:
         self._credentials: dict[str, NtlmCredential | CanvasCredentialValue] = {}
@@ -27,9 +32,117 @@ class CredentialStore:
         self._routing_locks: dict = {}
         self._fallback: dict[str, dict] = {}
         self._lock = RLock()
+        self._vault = None
+
+    @property
+    def persistence_enabled(self):
+        with self._lock:
+            return self._vault is not None
+
+    def _snapshot(self):
+        keys = set(self._credentials) | set(self._canvas_slots) | set(self._preferred_modes) | self._blocked_canvas
+        entries = {}
+        for key in keys:
+            value = self._credentials.get(key)
+            slots = {mode.value: self._encode(credential) for mode, credential in self._canvas_slots.get(key, {}).items()}
+            entries[key] = {'ntlm': {'username': value.username, 'password': value.password}
+                            if isinstance(value, NtlmCredential) else None,
+                            'slots': slots, 'preferred': self.preferred_mode(key).value,
+                            'blocked': key in self._blocked_canvas}
+        return {'entries': entries}
+
+    @staticmethod
+    def _encode(value):
+        result = {'base_url': value.base_url}
+        if isinstance(value, CanvasBrowserSessionCredential):
+            return {**result, 'cookies': dict(value.cookies)}
+        result['token'] = value.token
+        if isinstance(value, CanvasOAuthCredential):
+            result.update(refresh_token=value.refresh_token,
+                          expires_at=time.time() + value.expires_clock - monotonic())
+        return result
+
+    def _persist_change(self, key, change):
+        if self._vault is None:
+            return
+        state = self._snapshot()
+        entry = state['entries'].setdefault(key, {'ntlm': None, 'slots': {}, 'preferred': 'oauth', 'blocked': False})
+        change(entry)
+        self._vault.write('source_credentials', state)
+
+    @contextmanager
+    def _without_persistence(self):
+        original, self._vault = self._vault, None
+        try:
+            yield
+        finally:
+            self._vault = original
+
+    def configure_persistence(self, vault):
+        with self._lock:
+            try:
+                state = vault.read('source_credentials') if vault else {}
+                if state and set(state) != {'entries'}:
+                    raise VaultError()
+                entries = state.get('entries', {})
+                if not isinstance(entries, dict):
+                    raise VaultError()
+                loaded = {}
+                for key, entry in entries.items():
+                    valid_text(key)
+                    if not isinstance(entry, dict) or set(entry) != {'ntlm', 'slots', 'preferred', 'blocked'}:
+                        raise VaultError()
+                    if not isinstance(entry['blocked'], bool) or not isinstance(entry['slots'], dict):
+                        raise VaultError()
+                    preferred = CanvasAuthMode(entry['preferred'])
+                    ntlm = entry['ntlm']
+                    if ntlm is not None:
+                        if not isinstance(ntlm, dict) or set(ntlm) != {'username', 'password'}:
+                            raise VaultError()
+                        ntlm = NtlmCredential(valid_text(ntlm['username']), valid_text(ntlm['password']))
+                    slots = {}
+                    for mode, raw in entry['slots'].items():
+                        mode = CanvasAuthMode(mode)
+                        if not isinstance(raw, dict):
+                            raise VaultError()
+                        base = valid_text(raw['base_url'])
+                        if mode is CanvasAuthMode.BROWSER_SESSION:
+                            if set(raw) != {'base_url', 'cookies'}:
+                                raise VaultError()
+                            slots[mode] = CanvasBrowserSessionCredential(base, valid_cookies(raw['cookies']))
+                        elif mode is CanvasAuthMode.PAT:
+                            if set(raw) != {'base_url', 'token'}:
+                                raise VaultError()
+                            slots[mode] = CanvasCredential(base, valid_text(raw['token']))
+                        else:
+                            if (set(raw) != {'base_url', 'token', 'refresh_token', 'expires_at'}
+                                    or not isinstance(raw['expires_at'], (int, float)) or not math.isfinite(raw['expires_at'])):
+                                raise VaultError()
+                            slots[mode] = CanvasOAuthCredential(base, valid_text(raw['token']),
+                                valid_text(raw['refresh_token']), monotonic() + raw['expires_at'] - time.time())
+                    loaded[key] = (ntlm, slots, preferred, entry['blocked'])
+            except Exception:
+                raise VaultError() from None
+            with self._without_persistence():
+                self.clear_all()
+            self._vault = vault
+            for key, (ntlm, slots, preferred, blocked) in loaded.items():
+                self._preferred_modes[key] = preferred
+                if ntlm:
+                    self._credentials[key] = ntlm
+                if slots:
+                    self._canvas_slots[key] = slots
+                    self._activate_best(key)
+                    for mode in slots:
+                        self._generations[(key, mode)] = secrets.randbits(48) + 1
+                        # Restored presence is not a fresh remote authentication probe.
+                        self._slot_status[(key, mode)] = {'state': 'RESTORED'}
+                if blocked:
+                    self._blocked_canvas.add(key)
 
     def set_ntlm(self, credential_id: str, username: str, password: str) -> None:
         with self._lock:
+            self._persist_change(credential_id, lambda entry: entry.update(ntlm={'username': username, 'password': password}))
             self._credentials[credential_id] = NtlmCredential(username, password)
 
     def atomic(self):
@@ -47,6 +160,8 @@ class CredentialStore:
         with self._lock:
             if self._credentials.get(credential_id) is not expected:
                 return False
+            self._persist_change(credential_id, lambda entry: entry.update(ntlm=
+                {'username': candidate.username, 'password': candidate.password} if candidate else None))
             if candidate is None:
                 self._credentials.pop(credential_id, None)
             else:
@@ -55,8 +170,7 @@ class CredentialStore:
 
     def set_canvas(self, credential_id: str, base_url: str, token: str) -> None:
         with self._lock:
-            self._credentials[credential_id] = CanvasCredential(base_url, token)
-            self._install_slot(credential_id, self._credentials[credential_id])
+            self._install_slot(credential_id, CanvasCredential(base_url, token))
             self._activate_best(credential_id)
             self._blocked_canvas.discard(credential_id)
 
@@ -64,10 +178,10 @@ class CredentialStore:
         self, credential_id: str, base_url: str, cookies: dict[str, str]
     ) -> None:
         with self._lock:
-            self._credentials[credential_id] = CanvasBrowserSessionCredential(
+            candidate = CanvasBrowserSessionCredential(
                 base_url, dict(cookies)
             )
-            self._install_slot(credential_id, self._credentials[credential_id])
+            self._install_slot(credential_id, candidate)
             self._activate_best(credential_id)
 
     def set_canvas_oauth(self, credential_id: str, credential: CanvasOAuthCredential) -> None:
@@ -90,6 +204,12 @@ class CredentialStore:
         return self._preferred_modes.get(credential_id, CanvasAuthMode.OAUTH)
 
     def _install_slot(self, credential_id: str, credential: CanvasCredentialValue) -> None:
+        def change(entry):
+            entry['slots'][credential.auth_mode.value] = self._encode(credential)
+            entry['ntlm'] = None
+            if credential.auth_mode is CanvasAuthMode.PAT:
+                entry['blocked'] = False
+        self._persist_change(credential_id, change)
         self._canvas_slots.setdefault(credential_id, {})[credential.auth_mode] = credential
         key = (credential_id, credential.auth_mode)
         self._generations[key] = self._generations.get(key, 0) + 1
@@ -152,6 +272,11 @@ class CredentialStore:
             mode = CanvasAuthMode(mode)
             if generation is not None and self.generation(credential_id, mode) != generation:
                 return False
+            def change(entry):
+                entry['slots'].pop(mode.value, None)
+                if mode is CanvasAuthMode.PAT:
+                    entry['blocked'] = True
+            self._persist_change(credential_id, change)
             removed = self._canvas_slots.get(credential_id, {}).pop(mode, None)
             key = (credential_id, mode)
             self._generations[key] = self._generations.get(key, 0) + 1
@@ -192,8 +317,10 @@ class CredentialStore:
         self, credential_id: str, mode: CanvasAuthMode | str
     ) -> None:
         with self._lock:
-            self._canvas_modes[credential_id] = CanvasAuthMode(mode)
-            self._preferred_modes[credential_id] = CanvasAuthMode(mode)
+            mode = CanvasAuthMode(mode)
+            self._persist_change(credential_id, lambda entry: entry.update(preferred=mode.value))
+            self._canvas_modes[credential_id] = mode
+            self._preferred_modes[credential_id] = mode
             selected = self.canvas_slot(credential_id, mode)
             if selected:
                 self._credentials[credential_id] = selected
@@ -204,14 +331,23 @@ class CredentialStore:
 
     def block_canvas(self, credential_id: str) -> None:
         with self._lock:
+            self._persist_change(credential_id, lambda entry: entry.update(ntlm=None, slots={}, blocked=True))
             self._blocked_canvas.add(credential_id)
-            self.clear(credential_id)
+            with self._without_persistence():
+                self.clear(credential_id)
 
     def canvas_blocked(self, credential_id: str) -> bool:
         with self._lock:
             return credential_id in self._blocked_canvas
 
     def clear(self, credential_id: str) -> None:
+        with self._lock:
+            self._persist_change(credential_id, lambda entry: entry.update(ntlm=None, slots={},
+                blocked=entry['blocked'] or 'pat' in entry['slots']))
+            with self._without_persistence():
+                self._clear_memory(credential_id)
+
+    def _clear_memory(self, credential_id: str) -> None:
         with self._lock:
             for mode in list(self._canvas_slots.get(credential_id, {})):
                 self.remove_canvas_slot(credential_id, mode)
@@ -226,6 +362,13 @@ class CredentialStore:
                 credential.cookies.clear()
 
     def clear_all(self) -> None:
+        with self._lock:
+            if self._vault:
+                self._vault.write('source_credentials', {})
+            with self._without_persistence():
+                self._clear_all_memory()
+
+    def _clear_all_memory(self) -> None:
         with self._lock:
             for credential_id in list(self._canvas_slots):
                 self.clear(credential_id)

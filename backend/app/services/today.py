@@ -1,7 +1,7 @@
 import math
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import (
@@ -12,16 +12,19 @@ from app.db import (
     Task,
     TaskAnalysis,
     TaskProgress,
+    TaskSourceLink,
 )
-from app.services.calendar_capacity import free_capacity_between
+from app.services.assignment_summaries import SummaryReader
+from app.services.calendar_capacity import CapacityReader
 from app.services.change_policy import (
     analysis_should_notify_user,
     is_user_facing_event,
+    reportable_change_filter,
 )
 from app.services.course_terms import normalize_course_display
+from app.services.task_attachments import task_attachments
 from app.services.task_links import task_source_links
-from app.services.task_providers import task_provider_facts
-from app.services.work_tracking import task_work_summary
+from app.services.work_tracking import task_work_summaries
 from app.timezone import UIUC_TIMEZONE, as_uiuc, as_utc, planning_cutoff, uiuc_day_bounds
 
 DEFAULT_DAILY_CAPACITY_MINUTES = 180
@@ -79,7 +82,7 @@ class TodayEngine:
     def __init__(self, daily_capacity_minutes: int = DEFAULT_DAILY_CAPACITY_MINUTES):
         self.daily_capacity_minutes = max(30, daily_capacity_minutes)
 
-    def build(self, db: Session, now: datetime | None = None) -> dict:
+    def build(self, db: Session, now: datetime | None = None, *, include_details: bool = True) -> dict:
         now_utc = as_utc(now or datetime.now(UTC))
         today = as_uiuc(now_utc).date()
         rows = db.execute(
@@ -93,18 +96,21 @@ class TodayEngine:
         ).all()
         work = []
         completed = []
-        source_links = task_source_links(db, [task.id for task, _course, _analysis in rows])
+        tasks = [task for task, _course, _analysis in rows]
+        task_ids = [task.id for task in tasks]
+        progress_by_task = self._latest_progress(db, task_ids)
+        usage_by_task = task_work_summaries(db, tasks, now_utc)
+        change_impacts = self._task_change_impacts(db, task_ids) if include_details else {}
+        _day_start, day_end = uiuc_day_bounds(today)
+        deadlines = [as_utc(task.due_at or planning_cutoff(task.due_date_local))
+                     for task in tasks if task.due_at or task.due_date_local]
+        capacity = CapacityReader(db, now_utc, max([day_end, *deadlines]))
         for task, course, analysis in rows:
             complete = task.local_completed or task.status in COMPLETE_STATUSES
-            latest_progress = db.scalar(
-                select(TaskProgress)
-                .where(TaskProgress.task_id == task.id)
-                .order_by(TaskProgress.recorded_at.desc(), TaskProgress.id.desc())
-                .limit(1)
-            )
+            latest_progress = progress_by_task.get(task.id)
             progress = float(latest_progress.progress_percent or 0) if latest_progress else 0.0
             total, source, confidence, status = self._estimate(task, analysis)
-            usage = task_work_summary(db, task.id, now_utc, include_sessions=False)
+            usage = usage_by_task[task.id]
             used = usage["effective_used_minutes"]
             if progress >= 100:
                 remaining = 0
@@ -129,7 +135,7 @@ class TodayEngine:
                 (deadline_utc - now_utc).total_seconds() / 60 if deadline_utc else None
             )
             calendar_available, _capacity_source = (
-                free_capacity_between(db, now_utc, deadline_utc)
+                capacity.between(now_utc, deadline_utc)
                 if deadline_utc
                 else (None, "fallback")
             )
@@ -165,7 +171,7 @@ class TodayEngine:
             factors = (analysis.analysis_json or {}).get("importance", {}) if analysis else {}
             importance = max(importance, float(factors.get("academic_importance", 0)))
             dependency = float(factors.get("dependency", 0))
-            change_impact = self._task_change_impact(db, task.id)
+            change_impact = change_impacts.get(task.id, 0)
             score = round(
                 sum(
                     TODAY_WEIGHTS[key] * value
@@ -197,13 +203,11 @@ class TodayEngine:
                     "task_id": task.id,
                     "local_completed": bool(task.local_completed),
                     "submission_state": task.submission_state,
-                    "provider_facts": task_provider_facts(db, task.id),
                     "local_completed_at": task.local_completed_at,
                     "state_revision": task.state_revision or 0,
                     "course_id": course.id,
                     "course_code": normalize_course_display(course.course_code, course.name, course.term_name or course.term).course_code,
                     "title": task.title,
-                    **source_links[task.id],
                     "deadline": deadline_utc,
                     "deadline_precision": task.deadline_precision,
                     "due_date_local": task.due_date_local,
@@ -235,14 +239,22 @@ class TodayEngine:
                 row["task_id"],
             )
         )
-        _day_start, day_end = uiuc_day_bounds(today)
-        current_capacity, capacity_source = free_capacity_between(db, now_utc, day_end)
+        if include_details:
+            visible = [task["task_id"] for task in work + completed]
+            source_links = task_source_links(db, visible)
+            attachments = task_attachments(db, visible)
+            facts = SummaryReader(db, visible).facts
+            for task in work + completed:
+                task_id = task["task_id"]
+                task.update(source_links[task_id], attachments=attachments[task_id],
+                            provider_facts=facts[task_id])
+        current_capacity, capacity_source = capacity.between(now_utc, day_end)
         return {
             "date": today,
             "timezone": UIUC_TIMEZONE,
             "work": work,
             "completed": completed,
-            "attention": self._attention(db),
+            "attention": self._attention(db) if include_details else [],
             "capacity_minutes": current_capacity if current_capacity is not None else self.daily_capacity_minutes,
             "capacity_source": capacity_source,
         }
@@ -268,21 +280,34 @@ class TodayEngine:
         status = "FAILED" if legacy_fallback else analysis.analysis_status if analysis else "PENDING"
         return fallback, "fallback", 0.0, status if status in {"PENDING", "FAILED"} else "PENDING"
 
-    def _task_change_impact(self, db: Session, task_id: int) -> float:
-        from app.db import TaskSourceLink
+    @staticmethod
+    def _latest_progress(db: Session, task_ids: list[int]) -> dict[int, TaskProgress]:
+        result = {}
+        for offset in range(0, len(task_ids), 500):
+            ranked = select(TaskProgress.id, func.row_number().over(
+                partition_by=TaskProgress.task_id,
+                order_by=(TaskProgress.recorded_at.desc(), TaskProgress.id.desc()),
+            ).label("position")).where(TaskProgress.task_id.in_(task_ids[offset:offset + 500])).subquery()
+            for row in db.scalars(select(TaskProgress).join(ranked, ranked.c.id == TaskProgress.id)
+                                  .where(ranked.c.position == 1)):
+                result[row.task_id] = row
+        return result
 
-        value = db.scalar(
-            select(ChangeAnalysis.importance_score)
-            .join(ChangeEvent, ChangeEvent.id == ChangeAnalysis.change_event_id)
-            .join(TaskSourceLink, TaskSourceLink.source_item_id == ChangeEvent.source_item_id)
-            .where(
-                TaskSourceLink.task_id == task_id,
-                ChangeAnalysis.requires_action.is_(True),
-            )
-            .order_by(ChangeEvent.detected_at.desc())
-            .limit(1)
-        )
-        return float(value or 0)
+    @staticmethod
+    def _task_change_impacts(db: Session, task_ids: list[int]) -> dict[int, float]:
+        result = {}
+        for offset in range(0, len(task_ids), 500):
+            ranked = select(TaskSourceLink.task_id, ChangeAnalysis.importance_score,
+                func.row_number().over(partition_by=TaskSourceLink.task_id,
+                    order_by=ChangeEvent.detected_at.desc()).label("position"))\
+                .join(ChangeEvent, ChangeEvent.id == ChangeAnalysis.change_event_id)\
+                .join(TaskSourceLink, TaskSourceLink.source_item_id == ChangeEvent.source_item_id)\
+                .where(TaskSourceLink.task_id.in_(task_ids[offset:offset + 500]),
+                       ChangeAnalysis.requires_action.is_(True)).subquery()
+            for task_id, value in db.execute(select(ranked.c.task_id, ranked.c.importance_score)
+                                             .where(ranked.c.position == 1)):
+                result[task_id] = float(value or 0)
+        return result
 
     @staticmethod
     def _slack_bucket(slack: int | None) -> str:
@@ -304,6 +329,7 @@ class TodayEngine:
             .where(
                 Course.lifecycle_state == "ACTIVE",
                 ChangeEvent.read_at.is_(None),
+                reportable_change_filter(),
             )
             .order_by(ChangeEvent.detected_at.desc())
             .limit(100)

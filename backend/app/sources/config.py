@@ -89,6 +89,7 @@ def adapter_kwargs(definition: WebsiteDefinition) -> dict[str, Any]:
         "public_pages": row.get("public_pages"),
         "auth_rules": row.get("auth_rules"),
         "discovery": row.get("discovery"),
+        "discovery_path_limit": row.get("discovery_path_limit", 100),
         "download": row.get("download"),
         "timezone": definition.timezone,
         "term_calendar": definition.term_calendar,
