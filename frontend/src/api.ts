@@ -25,9 +25,16 @@ function isSameOriginRequest(path: string): boolean {
   }
 }
 
+/** The gateway marks preview logins in index.html; they get sample data and never reach the API. */
+export function isPreviewAccount(): boolean {
+  return typeof document !== "undefined" && typeof document.querySelector === "function" &&
+    document.querySelector('meta[name="aw-preview"][content="true"]') !== null;
+}
+
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
   const method = (init?.method ?? "GET").toUpperCase();
+  if (isPreviewAccount()) return import("./previewData").then(({ previewResponse }) => previewResponse(path, method));
+  const headers = new Headers(init?.headers);
   if (isSameOriginRequest(path) && MUTATING_METHODS.has(method) && typeof document !== "undefined") {
     const token = readCsrfCookie(document.cookie);
     if (token) headers.set("X-AW-CSRF", token);

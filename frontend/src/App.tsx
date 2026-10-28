@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, json } from "./api";
+import { api, isPreviewAccount, json } from "./api";
 import { toInternalPath, withBasePath } from "./publicPath";
 import { ActionFeedback, useAsyncAction } from "./ActionFeedback";
 import { setTaskIgnored } from "./taskActions";
@@ -67,6 +67,7 @@ function ChatLoadingFallback() {
 }
 
 export default function App() {
+  const preview = isPreviewAccount();
   const query = useQueryClient();
   const notificationAction = useAsyncAction();
   const [tab, setTab] = useState<Tab>(() =>
@@ -305,7 +306,7 @@ export default function App() {
     navigate(`/?${q}`);
   }
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${preview ? "preview-mode" : ""}`}>
       <aside className="app-sidebar">
         <div className="brand">
           <div className="mark">AW</div>
@@ -452,15 +453,16 @@ export default function App() {
               }}
             />
           ) : null}
-          <button
+          {!preview && <button
             className={`settings-link ${settingsPage ? "active" : ""}`}
             onClick={() => navigate("/settings/general")}
           >
             <span>⚙</span>Settings
-          </button>
+          </button>}
         </div>
       </aside>
       <main>
+        {preview && <div className="preview-banner" role="status">Preview Account，some functions not fully available</div>}
         <header>
           <div>
             <p className="eyebrow">
@@ -470,8 +472,8 @@ export default function App() {
           </div>
           <div className="actions">
             {ACCOUNT_URL && <a className="account-link" href={ACCOUNT_URL}>Account</a>}
-            <button className="primary" onClick={() => sync.mutate()}>
-              {sync.isPending ? "Syncing…" : "Sync now"}
+            <button className="primary" disabled={preview} onClick={() => sync.mutate()}>
+              {preview ? "Sync unavailable" : sync.isPending ? "Syncing…" : "Sync now"}
             </button>
           </div>
         </header>

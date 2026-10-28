@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS oauth_callbacks (
     expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS oauth_callbacks_expiry ON oauth_callbacks(expires_at);
+CREATE TABLE IF NOT EXISTS preview_accounts (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+);
 """
 
 
@@ -157,6 +160,40 @@ class IdentityStore:
             return db.execute(
                 "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username.strip(),)
             ).fetchone()
+
+    def create_preview_account(self, username: str, email: str, password: str) -> tuple[str, int]:
+        """Create an active login with no tenant. Its API access is denied by the gateway."""
+        username = normalize_username(username)
+        email = normalize_email(email)
+        password_hash = hash_password(password)
+        now = int(time.time())
+        with self._write() as db:
+            slots_used = {row[0] for row in db.execute("SELECT slot FROM users")}
+            slot = next((number for number in range(2, self.slots + 1) if number not in slots_used), None)
+            if slot is None:
+                raise IdentityError("No account slots remain")
+            user_id = secrets.token_hex(16)
+            try:
+                db.execute(
+                    """INSERT INTO users
+                    (id, username, email, password_hash, role, status, slot, created_at)
+                    VALUES (?, ?, ?, ?, 'user', 'active', ?, ?)""",
+                    (user_id, username, email, password_hash, slot, now),
+                )
+            except sqlite3.IntegrityError as error:
+                raise IdentityError("Username or email unavailable") from error
+            db.execute("INSERT INTO preview_accounts(user_id) VALUES (?)", (user_id,))
+            db.execute(
+                "INSERT INTO audit(actor_id, action, occurred_at) VALUES (?, 'preview_created', ?)",
+                (user_id, now),
+            )
+            return user_id, slot
+
+    def is_preview(self, user_id: str) -> bool:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT 1 FROM preview_accounts WHERE user_id=?", (user_id,)
+            ).fetchone() is not None
 
     def get_user(self, user_id: str):
         with self._connect() as db:

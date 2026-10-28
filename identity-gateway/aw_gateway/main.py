@@ -524,6 +524,11 @@ def create_app(config: GatewayConfig, *, csrf_key: bytes | None = None, store: I
             return JSONResponse({"detail": "AUTH_REQUIRED"}, status_code=401)
         if user["session_kind"] != "normal":
             return JSONResponse({"detail": "PASSWORD_CHANGE_REQUIRED"}, status_code=403)
+        if identity.is_preview(user["id"]):
+            return JSONResponse(
+                {"detail": "PREVIEW_STATIC_ONLY"}, status_code=403,
+                headers={"Cache-Control": "no-store"},
+            )
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if not _csrf_ok(request, config, secret, request.headers.get("x-aw-csrf", "")):
                 return JSONResponse({"detail": "CSRF_REQUIRED"}, status_code=403)
@@ -560,6 +565,14 @@ def create_app(config: GatewayConfig, *, csrf_key: bytes | None = None, store: I
         index = root / "index.html"
         if not index.is_file():
             return JSONResponse({"detail": "FRONTEND_NOT_READY"}, status_code=503)
+        if identity.is_preview(user["id"]):
+            document = index.read_text(encoding="utf-8")
+            if "</head>" not in document:
+                return JSONResponse({"detail": "FRONTEND_NOT_READY"}, status_code=503)
+            document = document.replace(
+                "</head>", '<meta name="aw-preview" content="true"></head>', 1,
+            )
+            return HTMLResponse(document, headers={"Cache-Control": "no-store"})
         response = FileResponse(index, media_type="text/html")
         response.headers["Cache-Control"] = "no-store"
         return response

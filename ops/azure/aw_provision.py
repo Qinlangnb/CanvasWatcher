@@ -232,7 +232,11 @@ def read_users() -> list[dict]:
     def dump():
         os.close(reader)
         db = sqlite3.connect(f"file:{IDENTITY_DB}?mode=ro", uri=True, timeout=10)
-        lines = [f"{row[0]}\t{row[1]}\t{row[2]}" for row in db.execute("SELECT id, status, slot FROM users")]
+        lines = [f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]}" for row in db.execute(
+            """SELECT u.id, u.status, u.slot,
+               EXISTS(SELECT 1 FROM preview_accounts p WHERE p.user_id=u.id)
+               FROM users u"""
+        )]
         os.write(writer, "\n".join(lines).encode())
         os.close(writer)
 
@@ -256,8 +260,8 @@ def read_users() -> list[dict]:
     if os.waitstatus_to_exitcode(status) != 0:
         raise RuntimeError("cannot read identity database")
     for line in data.decode().splitlines():
-        user_id, status_value, slot = line.split("\t")
-        rows.append({"id": user_id, "status": status_value, "slot": int(slot)})
+        user_id, status_value, slot, preview = line.split("\t")
+        rows.append({"id": user_id, "status": status_value, "slot": int(slot), "preview": preview == "1"})
     return rows
 
 
@@ -296,6 +300,9 @@ def reconcile() -> int:
 
 def reconcile_user(user: dict) -> int:
     slot = user["slot"]
+    if user.get("preview"):
+        # A preview login has no tenant process, storage image, credentials or upstream access.
+        return 0
     if (TENANT_SECRETS / slot_name(slot) / IMPORT_LOCK).exists():
         if unit_active(slot):
             stop_tenant(slot)
